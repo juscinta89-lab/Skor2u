@@ -1,4 +1,4 @@
-// Sport2u - Authentication Module
+// Sport2u - Authentication Module (with Role System)
 import { auth, db, googleProvider } from './firebase-config.js';
 import { 
   signInWithPopup, 
@@ -6,9 +6,7 @@ import {
   onAuthStateChanged 
 } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
 import { 
-  doc, 
-  setDoc, 
-  getDoc, 
+  doc, setDoc, getDoc, getDocs, query, collection, where,
   serverTimestamp 
 } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
 
@@ -19,26 +17,28 @@ window.signInWithGoogle = async function() {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
     
-    // Simpan/update data user dalam Firestore
     const userRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userRef);
     
     if (!userSnap.exists()) {
-      // User baru - daftar
+      // User baru - daftar sebagai admin sekolah sendiri (default)
       await setDoc(userRef, {
         uid: user.uid,
         nama: user.displayName,
         email: user.email,
         photoURL: user.photoURL,
-        schoolId: user.uid, // Default: sekolah sendiri = uid
+        schoolId: user.uid,
         schoolName: user.displayName + "'s School",
         role: 'admin',
         createdAt: serverTimestamp(),
         lastLogin: serverTimestamp()
       });
     } else {
-      // User existing - update last login
-      await setDoc(userRef, { lastLogin: serverTimestamp() }, { merge: true });
+      await setDoc(userRef, { 
+        lastLogin: serverTimestamp(),
+        nama: user.displayName,
+        photoURL: user.photoURL
+      }, { merge: true });
     }
     
     showToast('Berjaya log masuk!', 'success');
@@ -56,7 +56,6 @@ window.signInWithGoogle = async function() {
   }
 };
 
-// Logout
 window.signOutUser = async function() {
   try {
     await signOut(auth);
@@ -67,22 +66,19 @@ window.signOutUser = async function() {
   }
 };
 
-// Auth state listener
 onAuthStateChanged(auth, async (user) => {
   const landingPage = document.getElementById('landing-page');
   const appContainer = document.getElementById('app-container');
   const loadingScreen = document.getElementById('loading-screen');
   
   if (user) {
-    // User logged in
     landingPage.classList.add('hidden');
     appContainer.classList.remove('hidden');
     loadingScreen.classList.add('hidden');
     
-    // Load user data
     const userRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userRef);
-    const userData = userSnap.exists() ? userSnap.data() : {
+    let userData = userSnap.exists() ? userSnap.data() : {
       uid: user.uid,
       nama: user.displayName,
       email: user.email,
@@ -92,21 +88,62 @@ onAuthStateChanged(auth, async (user) => {
       role: 'admin'
     };
     
+    // Check kalau user ni member sekolah lain
+    try {
+      const memberCheck = await checkMembership(user.email);
+      if (memberCheck) {
+        userData = {
+          ...userData,
+          schoolId: memberCheck.schoolId,
+          schoolName: memberCheck.schoolName,
+          role: memberCheck.role,
+          houseId: memberCheck.houseId || null,
+          houseName: memberCheck.houseName || null,
+          isOwnSchool: false
+        };
+      } else {
+        userData.isOwnSchool = true;
+        // Pastikan kalau ni sekolah sendiri, role = admin
+        if (userData.schoolId === user.uid) {
+          userData.role = 'admin';
+        }
+      }
+    } catch (err) {
+      console.log('No membership found, using own school');
+      userData.isOwnSchool = true;
+    }
+    
     window.currentUser = userData;
     
-    // Initialize main app
     if (window.initApp) {
       window.initApp(userData);
     }
   } else {
-    // User logged out
     landingPage.classList.remove('hidden');
     appContainer.classList.add('hidden');
     loadingScreen.classList.add('hidden');
   }
 });
 
-// Toast helper
+async function checkMembership(email) {
+  try {
+    const membersQuery = query(
+      collection(db, 'memberships'),
+      where('email', '==', email),
+      where('status', '==', 'active')
+    );
+    const snap = await getDocs(membersQuery);
+    
+    if (!snap.empty) {
+      return snap.docs[0].data();
+    }
+    return null;
+  } catch (err) {
+    console.error('Membership check failed:', err);
+    return null;
+  }
+}
+
 window.showToast = function(message, type = 'info') {
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
@@ -117,7 +154,8 @@ window.showToast = function(message, type = 'info') {
   const colors = {
     success: 'border-green-500 text-green-400',
     error: 'border-red-500 text-red-400',
-    info: 'border-neon-blue text-neon-blue'
+    info: 'border-neon-blue text-neon-blue',
+    warning: 'border-yellow-500 text-yellow-400'
   };
   
   toast.classList.add(...colors[type].split(' '));
@@ -128,4 +166,20 @@ window.showToast = function(message, type = 'info') {
     toast.style.opacity = '0';
     setTimeout(() => toast.remove(), 300);
   }, 3000);
+};
+
+window.hasPermission = function(action) {
+  const user = window.currentUser;
+  if (!user) return false;
+  
+  const role = user.role || 'viewer';
+  
+  const permissions = {
+    admin: ['view', 'manage_events', 'manage_houses', 'manage_athletes', 'manage_members', 'update_score', 'add_athletes', 'add_acara', 'manage_settings'],
+    urusetia: ['view', 'update_score', 'add_acara', 'add_athletes'],
+    ketua_rumah: ['view', 'add_athletes_own_house'],
+    viewer: ['view']
+  };
+  
+  return permissions[role]?.includes(action) || false;
 };

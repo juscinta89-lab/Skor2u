@@ -1,0 +1,196 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // =====================================================
+    // HELPER FUNCTIONS
+    // =====================================================
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function userEmail() {
+      return request.auth.token.email;
+    }
+    
+    // Pemilik sekolah (admin asal)
+    function isSchoolOwner(schoolId) {
+      return isSignedIn() && request.auth.uid == schoolId;
+    }
+    
+    // Check kalau user ada membership aktif dalam sekolah
+    // memberships/{auto} { email, schoolId, role, status }
+    function getMembership(schoolId) {
+      return get(/databases/$(database)/documents/memberships/$(membershipId(schoolId))).data;
+    }
+    
+    // Helper: cari membership ID berdasarkan emel + schoolId
+    // Sebab kita tak boleh query dalam rules, kita guna ID deterministic
+    function membershipId(schoolId) {
+      return schoolId + '_' + userEmail();
+    }
+    
+    // Check kalau user ada membership dengan role tertentu
+    function hasMembershipRole(schoolId, allowedRoles) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/memberships/$(schoolId + '_' + userEmail())) &&
+        get(/databases/$(database)/documents/memberships/$(schoolId + '_' + userEmail())).data.role in allowedRoles &&
+        get(/databases/$(database)/documents/memberships/$(schoolId + '_' + userEmail())).data.status == 'active';
+    }
+    
+    // Member yang boleh baca data sekolah (semua role)
+    function canRead(schoolId) {
+      return isSchoolOwner(schoolId) || 
+             hasMembershipRole(schoolId, ['admin', 'urusetia', 'ketua_rumah', 'viewer']);
+    }
+    
+    // Member yang boleh update markah & acara (admin + urusetia)
+    function canManageScore(schoolId) {
+      return isSchoolOwner(schoolId) || 
+             hasMembershipRole(schoolId, ['admin', 'urusetia']);
+    }
+    
+    // Member yang boleh tambah atlet (admin + urusetia + ketua_rumah)
+    function canAddAthletes(schoolId) {
+      return isSchoolOwner(schoolId) || 
+             hasMembershipRole(schoolId, ['admin', 'urusetia', 'ketua_rumah']);
+    }
+    
+    // Hanya admin (school owner) boleh manage members
+    function canManageMembers(schoolId) {
+      return isSchoolOwner(schoolId);
+    }
+    
+    // =====================================================
+    // USERS COLLECTION
+    // =====================================================
+    
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+    
+    // =====================================================
+    // MEMBERSHIPS COLLECTION (TOP-LEVEL)
+    // Cara kerja:
+    // - Admin sekolah cipta membership (invite ahli)
+    // - User yang dijemput boleh baca membership sendiri (by email)
+    // - Document ID = {schoolId}_{email} untuk lookup pantas
+    // =====================================================
+    
+    match /memberships/{membershipId} {
+      // Baca: user sendiri (by email) atau admin sekolah
+      allow read: if isSignedIn() && (
+        resource.data.email == userEmail() ||
+        isSchoolOwner(resource.data.schoolId)
+      );
+      
+      // List/Query: kena ada filter sama ada by email (sendiri) atau schoolId (admin)
+      allow list: if isSignedIn();
+      
+      // Cipta: hanya admin sekolah
+      allow create: if isSignedIn() 
+        && isSchoolOwner(request.resource.data.schoolId)
+        && request.resource.data.role in ['admin', 'urusetia', 'ketua_rumah', 'viewer']
+        && request.resource.data.email is string
+        && request.resource.data.status == 'active';
+      
+      // Update/Delete: hanya admin sekolah
+      allow update: if isSignedIn() && isSchoolOwner(resource.data.schoolId);
+      allow delete: if isSignedIn() && isSchoolOwner(resource.data.schoolId);
+    }
+    
+    // =====================================================
+    // SCHOOLS COLLECTION (MULTI-TENANT)
+    // =====================================================
+    
+    match /schools/{schoolId} {
+      allow read: if canRead(schoolId);
+      allow write: if isSchoolOwner(schoolId);
+      
+      // ============ EVENTS ============
+      match /events/{eventId} {
+        allow read: if canRead(schoolId);
+        allow create, update: if canManageScore(schoolId);
+        allow delete: if isSchoolOwner(schoolId);
+        
+        match /acara/{acaraId} {
+          allow read: if canRead(schoolId);
+          allow write: if canManageScore(schoolId);
+        }
+        
+        match /participants/{participantId} {
+          allow read: if canRead(schoolId);
+          allow write: if canManageScore(schoolId);
+        }
+      }
+      
+      // ============ HOUSES ============
+      match /houses/{houseId} {
+        allow read: if canRead(schoolId);
+        // Update points dibenarkan untuk urusetia (utk update markah)
+        allow update: if canManageScore(schoolId);
+        // Create/delete hanya admin
+        allow create, delete: if isSchoolOwner(schoolId);
+      }
+      
+      // ============ ATHLETES ============
+      match /athletes/{athleteId} {
+        allow read: if canRead(schoolId);
+        allow create: if canAddAthletes(schoolId);
+        allow update: if canAddAthletes(schoolId);
+        allow delete: if canManageScore(schoolId);
+      }
+      
+      // ============ RESULTS (KEPUTUSAN) ============
+      match /results/{resultId} {
+        allow read: if canRead(schoolId);
+        allow create, update: if canManageScore(schoolId);
+        allow delete: if isSchoolOwner(schoolId);
+      }
+      
+      // ============ RECORDS, ANNOUNCEMENTS, MEDIA, CHECKINS, SETTINGS ============
+      match /records/{recordId} {
+        allow read: if canRead(schoolId);
+        allow write: if canManageScore(schoolId);
+      }
+      
+      match /announcements/{id} {
+        allow read: if canRead(schoolId);
+        allow write: if canManageScore(schoolId);
+      }
+      
+      match /media/{id} {
+        allow read: if canRead(schoolId);
+        allow write: if canManageScore(schoolId);
+      }
+      
+      match /checkins/{id} {
+        allow read: if canRead(schoolId);
+        allow write: if canManageScore(schoolId);
+      }
+      
+      match /settings/{id} {
+        allow read: if canRead(schoolId);
+        allow write: if isSchoolOwner(schoolId);
+      }
+      
+      match /teachers/{id} {
+        allow read: if canRead(schoolId);
+        allow write: if isSchoolOwner(schoolId);
+      }
+    }
+    
+    // =====================================================
+    // DEFAULT DENY
+    // =====================================================
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
