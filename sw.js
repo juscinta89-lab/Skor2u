@@ -1,5 +1,5 @@
-// Skor2u Pro Service Worker v3.2 - Result Update Fix
-const CACHE_NAME = 'skor2u-pro-v3.2.0';
+// Skor2u Pro Service Worker v3.3 - Multi-Medal Same House
+const CACHE_NAME = 'skor2u-pro-v3.3.0';
 const ASSETS = [
   './',
   './index.html',

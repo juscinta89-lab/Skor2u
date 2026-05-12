@@ -1164,10 +1164,38 @@ window.saveMeasurements = async function(eventId, acaraId, measurementType) {
 
 window.showManualResultModal = async function(eventId, acaraId) {
   const sid = window.currentUser.schoolId;
-  const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
-  const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
   
-  if (houses.length < 3) { showToast('Perlu minimum 3 rumah untuk pingat','warning'); return; }
+  // Fetch houses, athletes, and participants for this acara
+  const [housesSnap, athletesSnap, partsSnap] = await Promise.all([
+    getDocs(collection(db,'schools',sid,'houses')),
+    getDocs(collection(db,'schools',sid,'athletes')),
+    getDocs(collection(db,'schools',sid,'events',eventId,'acara',acaraId,'participants'))
+  ]);
+  
+  const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
+  const housesMap = {}; houses.forEach(h => housesMap[h.id] = h);
+  const athletesMap = {}; athletesSnap.forEach(d => athletesMap[d.id] = { id: d.id, ...d.data() });
+  
+  const participants = []; partsSnap.forEach(d => {
+    const p = d.data();
+    const ath = athletesMap[p.athleteId];
+    if (ath) {
+      participants.push({
+        id: d.id,
+        athleteId: p.athleteId,
+        athleteName: ath.name || p.athleteName || 'Unknown',
+        houseId: p.houseId,
+        houseName: housesMap[p.houseId]?.name || '-',
+        houseColor: housesMap[p.houseId]?.color || '#666',
+        measurement: p.measurement
+      });
+    }
+  });
+  
+  if (participants.length < 3) {
+    showToast('Perlu minimum 3 peserta dalam acara ini untuk award pingat. Tambah peserta dulu.','warning');
+    return;
+  }
   
   // Pre-load existing result if updating
   let existingResult = null;
@@ -1176,21 +1204,87 @@ window.showManualResultModal = async function(eventId, acaraId) {
     if (exSnap.exists()) existingResult = exSnap.data();
   } catch(e) { /* ignore */ }
   
-  const mkOpts = (selected) => houses.map(h => `<option value="${h.id}" ${h.id===selected?'selected':''}>${h.name}</option>`).join('');
+  // Build dropdown options from PARTICIPANTS (athletes in this acara)
+  // Group by house so user nampak grouping
+  participants.sort((a, b) => a.houseName.localeCompare(b.houseName) || a.athleteName.localeCompare(b.athleteName));
+  
+  const mkOpts = (selectedAthleteId) => {
+    let html = '<option value="">— Pilih peserta —</option>';
+    let currentHouse = null;
+    participants.forEach(p => {
+      if (p.houseName !== currentHouse) {
+        if (currentHouse !== null) html += '</optgroup>';
+        html += `<optgroup label="🏠 ${p.houseName}">`;
+        currentHouse = p.houseName;
+      }
+      // value = "athleteId|houseId|athleteName"
+      const val = `${p.athleteId}|${p.houseId}|${p.athleteName}`;
+      const isSelected = p.athleteId === selectedAthleteId;
+      html += `<option value="${val}" ${isSelected?'selected':''}>${p.athleteName}</option>`;
+    });
+    if (currentHouse !== null) html += '</optgroup>';
+    return html;
+  };
   
   openModal(`
-    <h2 class="font-display font-bold text-xl mb-4">${existingResult?'🔄 Kemaskini':'Rekod'} Keputusan</h2>
-    ${existingResult ? '<p class="text-xs mb-3" style="color:var(--warning)">⚠️ Keputusan sedia ada. Markah lama akan direverse dan markah baru akan diaward.</p>' : ''}
+    <h2 class="font-display font-bold text-xl mb-2">${existingResult?'🔄 Kemaskini':'Rekod'} Keputusan</h2>
+    <p class="text-xs mb-3" style="color:var(--text-secondary)">Pilih <strong>peserta</strong> untuk setiap pingat. Rumah yang sama boleh dapat 2 atau 3 pingat sekiranya peserta mereka layak.</p>
+    ${existingResult ? '<p class="text-xs mb-3 p-2 rounded" style="background:rgba(245,158,11,0.15);color:var(--warning)">⚠️ Keputusan sedia ada akan dikemaskini. Markah lama akan di-revert dan markah baru diaward.</p>' : ''}
     <form id="manual-result-form" class="space-y-3">
-      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥇 Emas</span><select name="gold" required class="input-field col-span-2">${mkOpts(existingResult?.gold)}</select></div>
-      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥈 Perak</span><select name="silver" required class="input-field col-span-2">${mkOpts(existingResult?.silver)}</select></div>
-      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥉 Gangsa</span><select name="bronze" required class="input-field col-span-2">${mkOpts(existingResult?.bronze)}</select></div>
+      <div>
+        <label class="block text-sm font-medium mb-1">🥇 Pingat Emas (10 mata)</label>
+        <select name="gold" required class="input-field" id="manual-gold">${mkOpts(existingResult?.goldAthleteId)}</select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">🥈 Pingat Perak (5 mata)</label>
+        <select name="silver" required class="input-field" id="manual-silver">${mkOpts(existingResult?.silverAthleteId)}</select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">🥉 Pingat Gangsa (3 mata)</label>
+        <select name="bronze" required class="input-field" id="manual-bronze">${mkOpts(existingResult?.bronzeAthleteId)}</select>
+      </div>
+      <div id="manual-preview" class="hidden p-3 rounded text-xs" style="background:var(--accent-glow)"></div>
       <div class="flex gap-3 pt-2">
         <button type="button" onclick="closeModal()" class="flex-1 btn-secondary">Batal</button>
         <button type="submit" class="flex-1 btn-primary" id="manual-submit-btn">${existingResult?'Kemaskini':'Simpan'}</button>
       </div>
     </form>
   `);
+  
+  // Live preview: show summary of house points
+  const updatePreview = () => {
+    const g = document.getElementById('manual-gold').value;
+    const s = document.getElementById('manual-silver').value;
+    const b = document.getElementById('manual-bronze').value;
+    if (!g || !s || !b) { document.getElementById('manual-preview').classList.add('hidden'); return; }
+    
+    const items = [
+      { val: g, pts: 10, label: '🥇' },
+      { val: s, pts: 5, label: '🥈' },
+      { val: b, pts: 3, label: '🥉' }
+    ];
+    
+    const houseTally = {};
+    items.forEach(it => {
+      const [aid, hid] = it.val.split('|');
+      if (!houseTally[hid]) houseTally[hid] = { name: housesMap[hid]?.name || '?', pts: 0, medals: [] };
+      houseTally[hid].pts += it.pts;
+      houseTally[hid].medals.push(it.label);
+    });
+    
+    const html = Object.values(houseTally).map(h => 
+      `<div><strong>${h.name}</strong>: ${h.medals.join(' ')} = <strong>+${h.pts} mata</strong></div>`
+    ).join('');
+    
+    const preview = document.getElementById('manual-preview');
+    preview.innerHTML = '<div class="font-bold mb-1">📊 Pengiraan Mata Rumah:</div>' + html;
+    preview.classList.remove('hidden');
+  };
+  
+  document.getElementById('manual-gold').addEventListener('change', updatePreview);
+  document.getElementById('manual-silver').addEventListener('change', updatePreview);
+  document.getElementById('manual-bronze').addEventListener('change', updatePreview);
+  updatePreview(); // initial
   
   document.getElementById('manual-result-form').onsubmit = async (e) => {
     e.preventDefault();
@@ -1199,13 +1293,34 @@ window.showManualResultModal = async function(eventId, acaraId) {
     
     const fd = new FormData(e.target);
     const g = fd.get('gold'), s = fd.get('silver'), b = fd.get('bronze');
-    if (new Set([g,s,b]).size < 3) {
-      showToast('Rumah mesti berbeza untuk setiap pingat','warning');
+    
+    if (!g || !s || !b) {
+      showToast('Sila pilih peserta untuk semua 3 pingat', 'warning');
       btn.disabled = false; btn.textContent = existingResult?'Kemaskini':'Simpan';
       return;
     }
     
-    await awardMedals(eventId, acaraId, { gold:g, silver:s, bronze:b }, houses);
+    // Parse "athleteId|houseId|athleteName"
+    const [goldAthleteId, goldHouseId, goldAthleteName] = g.split('|');
+    const [silverAthleteId, silverHouseId, silverAthleteName] = s.split('|');
+    const [bronzeAthleteId, bronzeHouseId, bronzeAthleteName] = b.split('|');
+    
+    // Validate: peserta mesti berbeza (RUMAH boleh sama)
+    if (new Set([goldAthleteId, silverAthleteId, bronzeAthleteId]).size < 3) {
+      showToast('Peserta sama tidak boleh dapat 2 pingat dalam acara yang sama', 'warning');
+      btn.disabled = false; btn.textContent = existingResult?'Kemaskini':'Simpan';
+      return;
+    }
+    
+    await awardMedals(eventId, acaraId, {
+      gold: goldHouseId,
+      silver: silverHouseId,
+      bronze: bronzeHouseId,
+      goldAthleteId, silverAthleteId, bronzeAthleteId,
+      goldAthlete: goldAthleteName,
+      silverAthlete: silverAthleteName,
+      bronzeAthlete: bronzeAthleteName
+    }, houses);
     closeModal();
   };
 };
@@ -1225,10 +1340,14 @@ window.finalizeResult = async function(eventId, acaraId) {
   const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
   const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
   
+  // Top 3 ranked: rumah boleh sama (cth: Merah dapat #1 dan #2 = emas + perak)
   await awardMedals(eventId, acaraId, {
     gold: ranked[0].houseId,
     silver: ranked[1].houseId,
     bronze: ranked[2].houseId,
+    goldAthleteId: ranked[0].athleteId,
+    silverAthleteId: ranked[1].athleteId,
+    bronzeAthleteId: ranked[2].athleteId,
     goldAthlete: ranked[0].athleteName,
     silverAthlete: ranked[1].athleteName,
     bronzeAthlete: ranked[2].athleteName,
@@ -1302,7 +1421,14 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
     if (!acaraSnap.exists()) throw new Error('Acara tidak dijumpai');
     const acara = acaraSnap.data();
     
-    // Re-fetch latest house data to avoid stale state
+    // Validate: peserta (athleteId) mesti berbeza untuk setiap pingat
+    // Rumah BOLEH sama — sebab 2 peserta dari rumah sama boleh layak ke akhir
+    const athleteIds = [medalData.goldAthleteId, medalData.silverAthleteId, medalData.bronzeAthleteId].filter(Boolean);
+    if (new Set(athleteIds).size !== athleteIds.length) {
+      throw new Error('Peserta sama tidak boleh dapat 2 pingat dari acara yang sama');
+    }
+    
+    // Re-fetch latest house data
     const housesMap = {};
     for (const h of houses) {
       const fresh = await getDoc(doc(db,'schools',sid,'houses',h.id));
@@ -1310,8 +1436,8 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
     }
     
     // Calculate net delta per house: aggregate all changes first, then apply once
-    // This prevents the batch overwrite bug
-    const delta = {}; // { houseId: { points: +N, gold: +N, silver: +N, bronze: +N } }
+    // RUMAH boleh dapat multiple pingat — delta akan accumulate
+    const delta = {};
     
     const addDelta = (houseId, pts, medalType) => {
       if (!houseId) return;
@@ -1320,7 +1446,7 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
       delta[houseId][medalType] += pts > 0 ? 1 : -1;
     };
     
-    // Step 1: If existing result, calculate reversal (negative delta)
+    // Step 1: Revert old result if exists
     if (existing.exists()) {
       const old = existing.data();
       if (old.gold) addDelta(old.gold, -10, 'gold');
@@ -1328,12 +1454,13 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
       if (old.bronze) addDelta(old.bronze, -3, 'bronze');
     }
     
-    // Step 2: Add new awards (positive delta)
+    // Step 2: Add new awards
+    // CONTOH: kalau emas + perak dari rumah Merah, Merah dapat +10 dan +5 = +15 mata
     if (medalData.gold) addDelta(medalData.gold, 10, 'gold');
     if (medalData.silver) addDelta(medalData.silver, 5, 'silver');
     if (medalData.bronze) addDelta(medalData.bronze, 3, 'bronze');
     
-    // Step 3: Apply net delta to each affected house in one update each
+    // Step 3: Apply net delta per house
     const batch = writeBatch(db);
     
     for (const [houseId, d] of Object.entries(delta)) {
@@ -1342,20 +1469,15 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
         console.warn('House not found:', houseId);
         continue;
       }
-      const newPoints = Math.max(0, (h.points || 0) + d.points);
-      const newGold = Math.max(0, (h.gold || 0) + d.gold);
-      const newSilver = Math.max(0, (h.silver || 0) + d.silver);
-      const newBronze = Math.max(0, (h.bronze || 0) + d.bronze);
-      
       batch.update(doc(db,'schools',sid,'houses',houseId), {
-        points: newPoints,
-        gold: newGold,
-        silver: newSilver,
-        bronze: newBronze
+        points: Math.max(0, (h.points || 0) + d.points),
+        gold: Math.max(0, (h.gold || 0) + d.gold),
+        silver: Math.max(0, (h.silver || 0) + d.silver),
+        bronze: Math.max(0, (h.bronze || 0) + d.bronze)
       });
     }
     
-    // Step 4: Save result document
+    // Step 4: Save result
     batch.set(resultRef, {
       eventId, acaraId,
       acaraName: acara.name,
@@ -1366,6 +1488,9 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
       goldAthlete: medalData.goldAthlete || null,
       silverAthlete: medalData.silverAthlete || null,
       bronzeAthlete: medalData.bronzeAthlete || null,
+      goldAthleteId: medalData.goldAthleteId || null,
+      silverAthleteId: medalData.silverAthleteId || null,
+      bronzeAthleteId: medalData.bronzeAthleteId || null,
       goldValue: medalData.goldValue ?? null,
       silverValue: medalData.silverValue ?? null,
       bronzeValue: medalData.bronzeValue ?? null,
@@ -1374,7 +1499,6 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
       isUpdate: existing.exists()
     });
     
-    // Step 5: Mark acara as completed
     batch.update(doc(db,'schools',sid,'events',eventId,'acara',acaraId), {
       completed: true,
       lastResultAt: serverTimestamp()
