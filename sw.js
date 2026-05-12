@@ -1,5 +1,5 @@
-// Skor2u Pro Service Worker v3.5 - Enhanced Live Scoreboard
-const CACHE_NAME = 'skor2u-pro-v3.5.0';
+// Skor2u Pro Service Worker v3.5.1 - Migration Tool + Legacy Data Fix
+const CACHE_NAME = 'skor2u-pro-v3.5.1';
 const ASSETS = [
   './',
   './index.html',

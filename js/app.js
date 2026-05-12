@@ -1378,14 +1378,17 @@ window.finalizeResult = async function(eventId, acaraId) {
     }
     
     // Validate top 3 have all required fields
+    // athleteId is OPTIONAL — kalau tiada, tetap boleh award (track by house only)
     for (let i = 0; i < 3; i++) {
       const r = ranked[i];
-      if (!r.athleteId) {
-        console.error('[finalizeResult] Participant #'+(i+1)+' missing athleteId:', r);
-        throw new Error(`Peserta #${i+1} tiada athleteId. Sila buang dan tambah peserta semula.`);
+      if (!r.houseId) {
+        console.error('[finalizeResult] Participant #'+(i+1)+' missing houseId:', r);
+        throw new Error(`Peserta #${i+1} (${r.athleteName||'?'}) tiada rumah. Sila buang & tambah semula peserta.`);
       }
-      if (!r.houseId) throw new Error(`Peserta #${i+1} (${r.athleteName}) tiada houseId`);
-      if (r.value == null) throw new Error(`Peserta #${i+1} (${r.athleteName}) tiada catatan`);
+      if (r.value == null) throw new Error(`Peserta #${i+1} (${r.athleteName||'?'}) tiada catatan masa/ukuran`);
+      if (!r.athleteId) {
+        console.warn('[finalizeResult] Peserta #'+(i+1)+' tiada athleteId — award tanpa track athlete');
+      }
     }
     
     const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
@@ -3353,12 +3356,24 @@ function renderSettings() {
             <button type="submit" class="btn-primary">💾 Simpan</button>
           </form>
         </div>
+        
+        <div class="glass-card p-6 mb-4" style="border-color:var(--warning)">
+          <h2 class="font-display font-bold text-lg mb-2 flex items-center gap-2">🔧 Alat Migrasi Data</h2>
+          <p class="text-sm mb-4" style="color:var(--text-secondary)">Auto-fix data lama yang dicipta sebelum kemaskini sistem. Klik kalau ada error masa rekod keputusan untuk acara lama.</p>
+          <div id="migration-status" class="text-xs mb-3 p-2 rounded hidden" style="background:var(--bg-elevated)"></div>
+          <button onclick="runDataMigration()" class="btn-primary w-full" id="migration-btn">
+            🔄 Jalankan Migrasi (Acara + Atlet)
+          </button>
+          <p class="text-xs mt-2" style="color:var(--text-muted)">
+            Akan tambah field yang hilang: acaraType, gender, athleteId. Selamat untuk dijalankan berulang kali.
+          </p>
+        </div>
       ` : ''}
       
       <div class="glass-card p-6">
         <h2 class="font-display font-bold text-lg mb-2">Tentang Skor2u Pro</h2>
-        <p class="text-sm mb-1" style="color:var(--text-secondary)">Versi 3.0.0 — Sport Management System</p>
-        <p class="text-sm" style="color:var(--text-secondary)">Sistem pengurusan sukan lengkap dengan catatan masa, jadual PDF, dan multi-tenant.</p>
+        <p class="text-sm mb-1" style="color:var(--text-secondary)">Versi 3.5.0 — Live Sports Management System</p>
+        <p class="text-sm" style="color:var(--text-secondary)">Sistem pengurusan sukan lengkap dengan catatan masa, jadual PDF, upacara penutup dan multi-tenant.</p>
       </div>
     </div>
   `;
@@ -3383,6 +3398,152 @@ window.setTheme = function(theme) {
   const logoSrc = theme === 'dark' ? 'assets/logo-light.png' : 'assets/logo.png';
   document.querySelectorAll('.dynamic-logo').forEach(img => img.src = logoSrc);
   renderSettings();
+};
+
+// ============= DATA MIGRATION (Fix legacy data) =============
+window.runDataMigration = async function() {
+  const btn = document.getElementById('migration-btn');
+  const statusEl = document.getElementById('migration-status');
+  
+  if (!confirm('Migrasi akan auto-fix data lama. Selamat untuk dijalankan. Teruskan?')) return;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Sedang migrasi...';
+  statusEl.classList.remove('hidden');
+  statusEl.innerHTML = '⏳ Memulakan migrasi...';
+  
+  const sid = window.currentUser.schoolId;
+  let stats = { acaraFixed: 0, athletesFixed: 0, participantsFixed: 0, errors: 0 };
+  let logs = [];
+  
+  try {
+    // ==== 1. Fix ATLET — tambah gender kalau tiada ====
+    logs.push('Memeriksa atlet...');
+    statusEl.innerHTML = logs.join('<br>');
+    
+    const athletesSnap = await getDocs(collection(db,'schools',sid,'athletes'));
+    for (const aDoc of athletesSnap.docs) {
+      const data = aDoc.data();
+      const updates = {};
+      
+      if (!data.gender) {
+        // Cuba detect dari nama (Muhammad, Ahmad, dll = lelaki)
+        const name = (data.name || '').toLowerCase();
+        if (/muhammad|mohamad|ahmad|abdul|ali|hassan|ibrahim|ismail|abu|amir|adib|aiman|akmal|amir|amri|amin|amzar|arif|asyraf|azim|aziz|aiman|adam|adib|amni|amni|aqil|ariff|akif/.test(name)) {
+          updates.gender = 'lelaki';
+        } else if (/siti|nur|nor|aisyah|fatimah|khadijah|aishah|nurul|aina|alia|amira|amni|ariana|balqis|farah|hanis|hannah|izzati|maisarah|nadia|nadhirah|natasha|raihana|sarah|sofia|sumayyah|syafiqah|wani|zara/.test(name)) {
+            updates.gender = 'perempuan';
+        } else {
+          updates.gender = 'lelaki'; // Default
+        }
+      }
+      
+      if (Object.keys(updates).length > 0) {
+        try {
+          await updateDoc(doc(db,'schools',sid,'athletes',aDoc.id), updates);
+          stats.athletesFixed++;
+        } catch(e) {
+          console.error('Failed to update athlete:', aDoc.id, e);
+          stats.errors++;
+        }
+      }
+    }
+    logs.push(`✓ ${stats.athletesFixed} atlet di-update dengan gender`);
+    statusEl.innerHTML = logs.join('<br>');
+    
+    // ==== 2. Fix ACARA — tambah acaraType, round, maxParticipantsPerHouse ====
+    logs.push('Memeriksa acara...');
+    statusEl.innerHTML = logs.join('<br>');
+    
+    const eventsSnap = await getDocs(collection(db,'schools',sid,'events'));
+    for (const evtDoc of eventsSnap.docs) {
+      const acaraSnap = await getDocs(collection(db,'schools',sid,'events',evtDoc.id,'acara'));
+      for (const acaraDoc of acaraSnap.docs) {
+        const data = acaraDoc.data();
+        const updates = {};
+        
+        // Auto-detect acaraType dari nama
+        if (!data.acaraType) {
+          const name = (data.name || '').toLowerCase();
+          if (/\d+m\b|\dm\s|lari|sprint|relay|berpagar|400m|800m|1500m|5000m|100m|200m/.test(name)) {
+            updates.acaraType = 'balapan';
+          } else if (/lompat|lontar|lempar|rejam|cakera|lembing|peluru|tukul|jauh|tinggi|bergalah/.test(name)) {
+            updates.acaraType = 'padang';
+          } else if (/bola|jaring|sepak|hoki|takraw|tampar|keranjang/.test(name)) {
+            updates.acaraType = 'team';
+          } else if (/badminton|tenis|pingpong|catur|squash/.test(name)) {
+            updates.acaraType = 'individu';
+          } else {
+            updates.acaraType = 'balapan'; // Default
+          }
+        }
+        
+        if (!data.round) updates.round = 'akhir';
+        if (!data.maxParticipantsPerHouse) updates.maxParticipantsPerHouse = 2;
+        if (data.completed == null) updates.completed = false;
+        
+        if (Object.keys(updates).length > 0) {
+          try {
+            await updateDoc(doc(db,'schools',sid,'events',evtDoc.id,'acara',acaraDoc.id), updates);
+            stats.acaraFixed++;
+          } catch(e) {
+            console.error('Failed to update acara:', acaraDoc.id, e);
+            stats.errors++;
+          }
+        }
+        
+        // ==== 3. Fix PARTICIPANTS dalam acara ni ====
+        const partsSnap = await getDocs(collection(db,'schools',sid,'events',evtDoc.id,'acara',acaraDoc.id,'participants'));
+        for (const pDoc of partsSnap.docs) {
+          const pData = pDoc.data();
+          const pUpdates = {};
+          
+          // Make sure athleteId, houseId, athleteName wujud
+          if (!pData.athleteId) {
+            // Cuba match dengan atlet dari nama
+            if (pData.athleteName) {
+              const matched = athletesSnap.docs.find(a => 
+                a.data().name?.toLowerCase().trim() === pData.athleteName.toLowerCase().trim()
+              );
+              if (matched) {
+                pUpdates.athleteId = matched.id;
+                if (!pData.houseId) pUpdates.houseId = matched.data().houseId;
+              }
+            }
+          }
+          
+          if (Object.keys(pUpdates).length > 0) {
+            try {
+              await updateDoc(doc(db,'schools',sid,'events',evtDoc.id,'acara',acaraDoc.id,'participants',pDoc.id), pUpdates);
+              stats.participantsFixed++;
+            } catch(e) {
+              console.error('Failed to update participant:', pDoc.id, e);
+              stats.errors++;
+            }
+          }
+        }
+      }
+    }
+    logs.push(`✓ ${stats.acaraFixed} acara di-update`);
+    logs.push(`✓ ${stats.participantsFixed} peserta di-update`);
+    statusEl.innerHTML = logs.join('<br>');
+    
+    // Done
+    if (stats.errors > 0) {
+      logs.push(`<span style="color:var(--warning)">⚠️ ${stats.errors} ralat berlaku — periksa Console</span>`);
+    }
+    logs.push('<strong style="color:var(--success)">✅ Migrasi selesai!</strong>');
+    statusEl.innerHTML = logs.join('<br>');
+    
+    showToast(`Migrasi selesai! ${stats.acaraFixed} acara, ${stats.athletesFixed} atlet, ${stats.participantsFixed} peserta di-update`, 'success');
+  } catch(err) {
+    console.error('Migration failed:', err);
+    statusEl.innerHTML = `<span style="color:var(--danger)">❌ Ralat: ${err.message}</span>`;
+    showToast('Migrasi gagal: ' + err.message, 'error');
+  }
+  
+  btn.disabled = false;
+  btn.innerHTML = '🔄 Jalankan Migrasi (Acara + Atlet)';
 };
 
 // ============= MODAL HELPER =============
