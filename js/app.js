@@ -195,13 +195,14 @@ function getMenuForRole(role) {
     members: { id: 'members', label: 'Ahli', icon: '👥' },
     live: { id: 'live', label: 'Live Score', icon: '⚡', badge: 'live-dot' },
     leaderboard: { id: 'leaderboard', label: 'Leaderboard', icon: '🏅' },
+    penutup: { id: 'penutup', label: 'Upacara Penutup', icon: '🏆' },
     settings: { id: 'settings', label: 'Tetapan', icon: '⚙️' }
   };
   const byRole = {
-    admin: ['dashboard','events','houses','athletes','members','live','leaderboard','settings'],
-    urusetia: ['dashboard','events','athletes','live','leaderboard','settings'],
-    ketua_rumah: ['dashboard','athletes','live','leaderboard','settings'],
-    viewer: ['live','leaderboard','settings']
+    admin: ['dashboard','events','houses','athletes','members','live','leaderboard','penutup','settings'],
+    urusetia: ['dashboard','events','athletes','live','leaderboard','penutup','settings'],
+    ketua_rumah: ['dashboard','athletes','live','leaderboard','penutup','settings'],
+    viewer: ['live','leaderboard','penutup','settings']
   };
   return (byRole[role] || byRole.viewer).map(k => all[k]);
 }
@@ -231,6 +232,7 @@ function navigateTo(page, params = {}) {
     members: ['admin'],
     live: ['admin','urusetia','ketua_rumah','viewer'],
     leaderboard: ['admin','urusetia','ketua_rumah','viewer'],
+    penutup: ['admin','urusetia','ketua_rumah','viewer'],
     settings: ['admin','urusetia','ketua_rumah','viewer']
   };
   
@@ -247,6 +249,7 @@ function navigateTo(page, params = {}) {
     case 'members': renderMembers(); break;
     case 'live': renderLiveScoreboard(); break;
     case 'leaderboard': renderLeaderboard(); break;
+    case 'penutup': renderPenutup(); break;
     case 'settings': renderSettings(); break;
   }
 }
@@ -1965,7 +1968,7 @@ function renderAthletes() {
     
     list.innerHTML = `
       <table class="data-table">
-        <thead><tr><th>No</th><th>Nama</th><th>Rumah</th><th>Kelas</th>${canAdd?'<th></th>':''}</tr></thead>
+        <thead><tr><th>No</th><th>Nama</th><th>Jantina</th><th>Rumah</th><th>Kelas</th>${canAdd?'<th></th>':''}</tr></thead>
         <tbody>
           ${athletes.map((a,i) => {
             const h = houses[a.houseId];
@@ -1974,6 +1977,7 @@ function renderAthletes() {
               <tr>
                 <td style="color:var(--text-muted)">${i+1}</td>
                 <td class="font-medium">${a.name}</td>
+                <td>${a.gender==='perempuan'?'👩 P':a.gender==='lelaki'?'👨 L':'<span style="color:var(--text-muted)">-</span>'}</td>
                 <td>${h?`<span class="inline-flex items-center gap-2"><span class="w-2 h-2 rounded-full" style="background:${h.color}"></span>${h.name}</span>`:'-'}</td>
                 <td class="text-sm" style="color:var(--text-secondary)">${a.class||'-'}</td>
                 ${canEditThis?`<td><div class="flex gap-1"><button onclick="showAthleteModal('${a.id}')" class="btn-secondary text-xs">Edit</button><button onclick="deleteAthlete('${a.id}','${(a.name||'').replace(/'/g,"\\'")}')" class="btn-danger text-xs">🗑</button></div></td>`:'<td></td>'}
@@ -1995,7 +1999,7 @@ window.showAthleteModal = async function(athleteId = null) {
   let houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
   if (role === 'ketua_rumah' && userHouseId) houses = houses.filter(h => h.id === userHouseId);
   
-  let athlete = { name:'', class:'', houseId: role==='ketua_rumah' ? userHouseId : '' };
+  let athlete = { name:'', class:'', gender:'lelaki', houseId: role==='ketua_rumah' ? userHouseId : '' };
   if (athleteId) {
     const snap = await getDoc(doc(db,'schools',sid,'athletes',athleteId));
     if (snap.exists()) athlete = snap.data();
@@ -2006,8 +2010,15 @@ window.showAthleteModal = async function(athleteId = null) {
     <form id="athlete-form" class="space-y-4">
       <div><label class="block text-sm mb-1" style="color:var(--text-secondary)">Nama Penuh</label>
         <input type="text" name="name" required class="input-field" value="${athlete.name}"></div>
-      <div><label class="block text-sm mb-1" style="color:var(--text-secondary)">Kelas</label>
-        <input type="text" name="class" class="input-field" value="${athlete.class||''}" placeholder="5 Bestari"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-sm mb-1" style="color:var(--text-secondary)">Kelas</label>
+          <input type="text" name="class" class="input-field" value="${athlete.class||''}" placeholder="5 Bestari"></div>
+        <div><label class="block text-sm mb-1" style="color:var(--text-secondary)">Jantina</label>
+          <select name="gender" class="input-field" required>
+            <option value="lelaki" ${athlete.gender==='lelaki'?'selected':''}>👨 Lelaki</option>
+            <option value="perempuan" ${athlete.gender==='perempuan'?'selected':''}>👩 Perempuan</option>
+          </select></div>
+      </div>
       <div><label class="block text-sm mb-1" style="color:var(--text-secondary)">Rumah Sukan</label>
         <select name="houseId" class="input-field" ${role==='ketua_rumah'?'disabled':''}>
           ${role!=='ketua_rumah'?'<option value="">-- Pilih --</option>':''}
@@ -2022,6 +2033,7 @@ window.showAthleteModal = async function(athleteId = null) {
     const fd = new FormData(e.target);
     const data = {
       name: fd.get('name').trim(), class: fd.get('class').trim(),
+      gender: fd.get('gender') || 'lelaki',
       houseId: role==='ketua_rumah' ? userHouseId : fd.get('houseId'),
       updatedBy: window.currentUser.email
     };
@@ -2340,6 +2352,567 @@ window.exportLeaderboardPDF = async function() {
     pdf.save(`Leaderboard-${new Date().toISOString().split('T')[0]}.pdf`);
     showToast('PDF dijana!','success');
   } catch(err) { showToast('Error: '+err.message,'error'); }
+};
+
+// ============= PENUTUP / CLOSING CEREMONY =============
+function renderPenutup() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = `
+    <div class="fade-in">
+      <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
+        <div>
+          <h1 class="font-display font-bold text-3xl flex items-center gap-3">🏆 Upacara Penutup</h1>
+          <p class="text-sm mt-1" style="color:var(--text-secondary)">Anugerah Johan Keseluruhan, Olahragawan & Olahragawati</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="exportPenutupPDF()" class="btn-secondary text-sm">📄 PDF Sijil</button>
+          <button onclick="toggleFullscreen()" class="btn-primary text-sm">⛶ Skrin Penuh</button>
+        </div>
+      </div>
+      <div id="penutup-content"><div class="empty-state"><div class="spinner"></div> Mengira anugerah...</div></div>
+    </div>
+  `;
+  loadPenutupData();
+}
+
+async function loadPenutupData() {
+  const sid = window.currentUser.schoolId;
+  
+  // Listen realtime to all collections needed
+  const [housesSnap, athletesSnap, resultsSnap] = await Promise.all([
+    getDocs(collection(db,'schools',sid,'houses')),
+    getDocs(collection(db,'schools',sid,'athletes')),
+    getDocs(collection(db,'schools',sid,'results'))
+  ]);
+  
+  const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
+  const housesMap = {}; houses.forEach(h => housesMap[h.id] = h);
+  
+  const athletes = []; athletesSnap.forEach(d => athletes.push({id:d.id, ...d.data()}));
+  const athletesMap = {}; athletes.forEach(a => athletesMap[a.id] = a);
+  
+  const results = []; resultsSnap.forEach(d => results.push({id:d.id, ...d.data()}));
+  
+  // 1. JOHAN KESELURUHAN — rumah dengan mata tertinggi
+  houses.sort((a,b) => (b.points||0) - (a.points||0) || (b.gold||0) - (a.gold||0));
+  
+  // 2. OLAHRAGAWAN/WATI — kira pingat individu setiap atlet
+  // Aggregate medal counts per athleteId from all results
+  const athleteStats = {}; // { athleteId: { gold, silver, bronze, points, name, gender, houseId } }
+  
+  results.forEach(r => {
+    const award = (athleteId, athleteName, medalType, pts) => {
+      if (!athleteId) return;
+      const ath = athletesMap[athleteId];
+      if (!athleteStats[athleteId]) {
+        athleteStats[athleteId] = {
+          id: athleteId,
+          name: athleteName || ath?.name || 'Unknown',
+          gender: ath?.gender || 'lelaki',
+          houseId: ath?.houseId || null,
+          gold: 0, silver: 0, bronze: 0, points: 0
+        };
+      }
+      athleteStats[athleteId][medalType]++;
+      athleteStats[athleteId].points += pts;
+    };
+    
+    award(r.goldAthleteId, r.goldAthlete, 'gold', 10);
+    award(r.silverAthleteId, r.silverAthlete, 'silver', 5);
+    award(r.bronzeAthleteId, r.bronzeAthlete, 'bronze', 3);
+  });
+  
+  // Convert to array and split by gender
+  const allAthleteStats = Object.values(athleteStats);
+  
+  // Ranking criteria:
+  // 1. Total emas (desc)
+  // 2. Total perak (desc)
+  // 3. Total gangsa (desc)
+  // 4. Total points (desc)
+  const rankAthletes = (arr) => arr.sort((a, b) => {
+    if (b.gold !== a.gold) return b.gold - a.gold;
+    if (b.silver !== a.silver) return b.silver - a.silver;
+    if (b.bronze !== a.bronze) return b.bronze - a.bronze;
+    return b.points - a.points;
+  });
+  
+  const olahragawan = rankAthletes(allAthleteStats.filter(a => a.gender === 'lelaki'));
+  const olahragawati = rankAthletes(allAthleteStats.filter(a => a.gender === 'perempuan'));
+  
+  const top3Olahragawan = olahragawan.slice(0, 3);
+  const top3Olahragawati = olahragawati.slice(0, 3);
+  
+  // 3. Render
+  const container = document.getElementById('penutup-content');
+  if (!container) return;
+  
+  const noData = houses.length === 0 || results.length === 0;
+  
+  if (noData) {
+    container.innerHTML = `
+      <div class="glass-card p-12 text-center">
+        <div class="text-6xl mb-4">🎭</div>
+        <h2 class="font-display font-bold text-xl mb-2">Upacara Penutup Belum Bersedia</h2>
+        <p class="text-sm" style="color:var(--text-secondary)">${houses.length===0?'Belum ada rumah sukan.':results.length===0?'Belum ada keputusan acara.':''}</p>
+        <p class="text-xs mt-2" style="color:var(--text-muted)">Lengkapkan acara dan keputusan dahulu sebelum menjalankan upacara penutup.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  const champion = houses[0];
+  const naibJohan = houses[1];
+  const ketiga = houses[2];
+  
+  let html = '';
+  
+  // === HERO BANNER ===
+  html += `
+    <div class="ceremony-hero mb-6">
+      <div class="firework">🎆</div>
+      <div class="text-sm uppercase tracking-widest opacity-80 mb-2">Anugerah Tertinggi</div>
+      <div class="text-5xl sm:text-7xl mb-4">🏆</div>
+      <h2 class="font-display font-bold text-3xl sm:text-5xl mb-3">JOHAN KESELURUHAN</h2>
+      <div class="inline-flex items-center gap-3 px-6 py-3 rounded-full mb-3" style="background:rgba(255,255,255,0.15);backdrop-filter:blur(10px)">
+        <span class="w-6 h-6 rounded-full" style="background:${champion.color||'#fff'}"></span>
+        <span class="font-display font-bold text-2xl sm:text-4xl">RUMAH ${champion.name?.toUpperCase()}</span>
+      </div>
+      <div class="text-xl sm:text-3xl font-display font-bold opacity-90">${champion.points||0} mata</div>
+      <div class="flex gap-4 justify-center mt-3 text-sm">
+        <span>🥇 ${champion.gold||0}</span>
+        <span>🥈 ${champion.silver||0}</span>
+        <span>🥉 ${champion.bronze||0}</span>
+      </div>
+    </div>
+  `;
+  
+  // === PODIUM RUMAH ===
+  if (houses.length >= 3) {
+    html += `
+      <div class="glass-card p-6 mb-6">
+        <h3 class="font-display font-bold text-xl text-center mb-2">Kedudukan Keseluruhan Rumah Sukan</h3>
+        <p class="text-xs text-center mb-4" style="color:var(--text-muted)">Top 3</p>
+        <div class="podium-3d">
+          <div class="podium-block second">
+            <div class="text-3xl mb-2">🥈</div>
+            <div class="font-bold text-sm uppercase opacity-80">Naib Johan</div>
+            <div class="w-4 h-4 rounded-full mx-auto my-2" style="background:${naibJohan.color||'#999'}"></div>
+            <div class="font-display font-bold text-xl">${naibJohan.name}</div>
+            <div class="text-2xl font-bold mt-2">${naibJohan.points||0}</div>
+            <div class="text-xs">🥇${naibJohan.gold||0} 🥈${naibJohan.silver||0} 🥉${naibJohan.bronze||0}</div>
+          </div>
+          <div class="podium-block first">
+            <div class="text-4xl mb-2">🥇</div>
+            <div class="font-bold text-sm uppercase">JOHAN</div>
+            <div class="w-5 h-5 rounded-full mx-auto my-2 ring-2 ring-yellow-600" style="background:${champion.color||'#fbbf24'}"></div>
+            <div class="font-display font-bold text-2xl">${champion.name}</div>
+            <div class="text-3xl font-bold mt-2">${champion.points||0}</div>
+            <div class="text-xs">🥇${champion.gold||0} 🥈${champion.silver||0} 🥉${champion.bronze||0}</div>
+          </div>
+          <div class="podium-block third">
+            <div class="text-2xl mb-2">🥉</div>
+            <div class="font-bold text-sm uppercase opacity-80">Ketiga</div>
+            <div class="w-4 h-4 rounded-full mx-auto my-2" style="background:${ketiga.color||'#999'}"></div>
+            <div class="font-display font-bold text-lg">${ketiga.name}</div>
+            <div class="text-xl font-bold mt-2">${ketiga.points||0}</div>
+            <div class="text-xs">🥇${ketiga.gold||0} 🥈${ketiga.silver||0} 🥉${ketiga.bronze||0}</div>
+          </div>
+        </div>
+        
+        ${houses.length > 3 ? `
+          <details class="mt-4">
+            <summary class="cursor-pointer text-sm text-center" style="color:var(--text-secondary)">Lihat semua rumah</summary>
+            <div class="mt-3 space-y-2">
+              ${houses.slice(3).map((h,i) => `
+                <div class="flex items-center gap-3 p-3 rounded-lg" style="background:var(--bg-elevated)">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:var(--bg-main);border:1px solid var(--border)">${i+4}</div>
+                  <div class="w-3 h-3 rounded-full" style="background:${h.color||'#999'}"></div>
+                  <div class="flex-1 font-medium">${h.name}</div>
+                  <div class="text-xs" style="color:var(--text-muted)">🥇${h.gold||0} 🥈${h.silver||0} 🥉${h.bronze||0}</div>
+                  <div class="font-bold text-neon-blue">${h.points||0}</div>
+                </div>
+              `).join('')}
+            </div>
+          </details>
+        ` : ''}
+      </div>
+    `;
+  }
+  
+  // === OLAHRAGAWAN & OLAHRAGAWATI ===
+  const renderAthleteAward = (title, icon, athletes, color) => {
+    if (athletes.length === 0) {
+      return `
+        <div class="glass-card p-6 text-center">
+          <div class="text-4xl mb-2">${icon}</div>
+          <h3 class="font-display font-bold text-lg mb-1">${title}</h3>
+          <p class="text-xs mt-3" style="color:var(--text-muted)">Belum ada atlet ${title.toLowerCase()} layak</p>
+        </div>
+      `;
+    }
+    
+    const champ = athletes[0];
+    const house = housesMap[champ.houseId];
+    
+    return `
+      <div class="champion-card relative overflow-hidden">
+        <div class="firework">${icon}</div>
+        <div class="relative z-10">
+          <div class="text-center mb-4">
+            <div class="text-xs uppercase tracking-widest mb-1" style="color:var(--warning)">Anugerah</div>
+            <h3 class="font-display font-bold text-2xl sm:text-3xl" style="color:var(--text-primary)">${title}</h3>
+            <div class="text-3xl mt-2">⭐</div>
+          </div>
+          
+          <div class="athlete-spotlight">
+            <div class="athlete-spotlight-content">
+              <div class="text-5xl mb-3">${icon}</div>
+              <div class="font-display font-bold text-2xl sm:text-3xl mb-2">${champ.name}</div>
+              ${house ? `
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm" style="background:${house.color||'#666'};color:white">
+                  <span class="w-2 h-2 rounded-full bg-white"></span>
+                  Rumah ${house.name}
+                </div>
+              ` : ''}
+              
+              <div class="medal-count justify-center mt-4">
+                <div class="medal-count-item medal-gold">🥇 ${champ.gold}</div>
+                <div class="medal-count-item medal-silver">🥈 ${champ.silver}</div>
+                <div class="medal-count-item medal-bronze">🥉 ${champ.bronze}</div>
+              </div>
+              <div class="mt-3 text-sm" style="color:var(--text-secondary)">
+                Jumlah <strong style="color:var(--accent-2)">${champ.points} mata</strong> individu
+              </div>
+            </div>
+          </div>
+          
+          ${athletes.length > 1 ? `
+            <div class="mt-4 space-y-2">
+              <div class="text-xs uppercase tracking-wider text-center" style="color:var(--text-muted)">Naib & Ketiga</div>
+              ${athletes.slice(1, 3).map((a, i) => {
+                const h = housesMap[a.houseId];
+                return `
+                  <div class="flex items-center gap-3 p-2 rounded-lg" style="background:var(--bg-elevated)">
+                    <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${i===0?'medal-silver':'medal-bronze'}">${i+2}</div>
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium text-sm truncate">${a.name}</div>
+                      <div class="text-xs" style="color:var(--text-muted)">${h?.name||'-'} • 🥇${a.gold} 🥈${a.silver} 🥉${a.bronze}</div>
+                    </div>
+                    <div class="text-sm font-bold text-neon-blue">${a.points}</div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  };
+  
+  html += `
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      ${renderAthleteAward('Olahragawan', '🏃‍♂️', top3Olahragawan, '#3b82f6')}
+      ${renderAthleteAward('Olahragawati', '🏃‍♀️', top3Olahragawati, '#ec4899')}
+    </div>
+  `;
+  
+  // === RINGKASAN STATISTIK ===
+  const totalAcara = results.length;
+  const totalAtletDenganPingat = allAthleteStats.length;
+  const totalEmas = results.length; // 1 emas per result
+  
+  html += `
+    <div class="glass-card p-6">
+      <h3 class="font-display font-bold text-lg mb-4 text-center">📊 Ringkasan Kejohanan</h3>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+        <div>
+          <div class="text-3xl font-display font-bold text-neon-blue">${totalAcara}</div>
+          <div class="text-xs mt-1" style="color:var(--text-secondary)">Acara Selesai</div>
+        </div>
+        <div>
+          <div class="text-3xl font-display font-bold text-yellow-500">${totalEmas * 3}</div>
+          <div class="text-xs mt-1" style="color:var(--text-secondary)">Pingat Diaward</div>
+        </div>
+        <div>
+          <div class="text-3xl font-display font-bold" style="color:var(--accent-2)">${totalAtletDenganPingat}</div>
+          <div class="text-xs mt-1" style="color:var(--text-secondary)">Atlet Mendapat Pingat</div>
+        </div>
+        <div>
+          <div class="text-3xl font-display font-bold text-green-500">${houses.length}</div>
+          <div class="text-xs mt-1" style="color:var(--text-secondary)">Rumah Sukan</div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Top performer carousel
+  if (allAthleteStats.length > 0) {
+    const topOverall = rankAthletes([...allAthleteStats]).slice(0, 10);
+    html += `
+      <div class="glass-card p-6 mt-6">
+        <h3 class="font-display font-bold text-lg mb-4">🌟 Top 10 Atlet (Lelaki & Perempuan)</h3>
+        <div class="space-y-2">
+          ${topOverall.map((a, i) => {
+            const h = housesMap[a.houseId];
+            const isOlahragawan = a.gender === 'lelaki' && top3Olahragawan[0]?.id === a.id;
+            const isOlahragawati = a.gender === 'perempuan' && top3Olahragawati[0]?.id === a.id;
+            return `
+              <div class="flex items-center gap-3 p-3 rounded-lg" style="background:${(isOlahragawan||isOlahragawati)?'var(--accent-glow)':'var(--bg-elevated)'};${(isOlahragawan||isOlahragawati)?'border:1px solid var(--accent-2)':''}">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold ${i===0?'medal-gold':i===1?'medal-silver':i===2?'medal-bronze':''}" style="${i>2?'background:var(--bg-main);border:1px solid var(--border)':''}">${i+1}</div>
+                <div class="text-xl">${a.gender==='perempuan'?'👩':'👨'}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium truncate">${a.name} ${isOlahragawan?'<span class="award-badge text-xs ml-2">⭐ Olahragawan</span>':''}${isOlahragawati?'<span class="award-badge text-xs ml-2" style="background:linear-gradient(135deg,#ec4899,#db2777)">⭐ Olahragawati</span>':''}</div>
+                  <div class="text-xs flex items-center gap-2" style="color:var(--text-muted)">
+                    ${h ? `<span class="w-2 h-2 rounded-full" style="background:${h.color}"></span>${h.name}` : '-'}
+                    <span>•</span>
+                    <span>🥇${a.gold} 🥈${a.silver} 🥉${a.bronze}</span>
+                  </div>
+                </div>
+                <div class="font-display font-bold text-neon-blue">${a.points}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+  
+  container.innerHTML = html;
+}
+
+window.exportPenutupPDF = async function() {
+  try {
+    showToast('Menjana PDF Anugerah...', 'info');
+    const sid = window.currentUser.schoolId;
+    
+    const [housesSnap, athletesSnap, resultsSnap] = await Promise.all([
+      getDocs(collection(db,'schools',sid,'houses')),
+      getDocs(collection(db,'schools',sid,'athletes')),
+      getDocs(collection(db,'schools',sid,'results'))
+    ]);
+    
+    const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
+    const housesMap = {}; houses.forEach(h => housesMap[h.id] = h);
+    
+    const athletes = []; athletesSnap.forEach(d => athletes.push({id:d.id, ...d.data()}));
+    const athletesMap = {}; athletes.forEach(a => athletesMap[a.id] = a);
+    
+    const results = []; resultsSnap.forEach(d => results.push({id:d.id, ...d.data()}));
+    
+    // Calculate
+    houses.sort((a,b) => (b.points||0) - (a.points||0) || (b.gold||0) - (a.gold||0));
+    
+    const athleteStats = {};
+    results.forEach(r => {
+      const award = (athleteId, athleteName, medalType, pts) => {
+        if (!athleteId) return;
+        const ath = athletesMap[athleteId];
+        if (!athleteStats[athleteId]) {
+          athleteStats[athleteId] = {
+            id: athleteId,
+            name: athleteName || ath?.name || 'Unknown',
+            gender: ath?.gender || 'lelaki',
+            houseId: ath?.houseId,
+            gold: 0, silver: 0, bronze: 0, points: 0
+          };
+        }
+        athleteStats[athleteId][medalType]++;
+        athleteStats[athleteId].points += pts;
+      };
+      award(r.goldAthleteId, r.goldAthlete, 'gold', 10);
+      award(r.silverAthleteId, r.silverAthlete, 'silver', 5);
+      award(r.bronzeAthleteId, r.bronzeAthlete, 'bronze', 3);
+    });
+    
+    const rankAth = (arr) => arr.sort((a, b) => {
+      if (b.gold !== a.gold) return b.gold - a.gold;
+      if (b.silver !== a.silver) return b.silver - a.silver;
+      if (b.bronze !== a.bronze) return b.bronze - a.bronze;
+      return b.points - a.points;
+    });
+    
+    const olahragawan = rankAth(Object.values(athleteStats).filter(a => a.gender === 'lelaki'));
+    const olahragawati = rankAth(Object.values(athleteStats).filter(a => a.gender === 'perempuan'));
+    
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF();
+    
+    // ====== PAGE 1: JOHAN KESELURUHAN ======
+    pdf.setFillColor(10, 26, 61);
+    pdf.rect(0, 0, 210, 297, 'F');
+    
+    // Header
+    pdf.setTextColor(255, 215, 0);
+    pdf.setFontSize(28); pdf.setFont('helvetica','bold');
+    pdf.text('UPACARA PENUTUP', 105, 30, { align: 'center' });
+    pdf.setFontSize(14); pdf.setFont('helvetica','normal');
+    pdf.setTextColor(255, 255, 255);
+    pdf.text(window.currentUser.schoolName || 'Sekolah', 105, 40, { align: 'center' });
+    
+    // Trophy
+    pdf.setFontSize(80); pdf.setTextColor(255, 215, 0);
+    pdf.text('🏆', 105, 85, { align: 'center' });
+    
+    // Champion
+    pdf.setFontSize(20); pdf.setFont('helvetica','bold');
+    pdf.setTextColor(255, 215, 0);
+    pdf.text('JOHAN KESELURUHAN', 105, 110, { align: 'center' });
+    
+    if (houses.length > 0) {
+      const champion = houses[0];
+      pdf.setFontSize(36);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(`RUMAH ${(champion.name||'').toUpperCase()}`, 105, 130, { align: 'center' });
+      
+      pdf.setFontSize(24); pdf.setFont('helvetica','normal');
+      pdf.setTextColor(255, 215, 0);
+      pdf.text(`${champion.points||0} MATA`, 105, 145, { align: 'center' });
+      
+      pdf.setFontSize(14);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(`🥇 ${champion.gold||0} Emas    🥈 ${champion.silver||0} Perak    🥉 ${champion.bronze||0} Gangsa`, 105, 158, { align: 'center' });
+    }
+    
+    // Naib Johan & Ketiga
+    if (houses.length >= 2) {
+      pdf.setFontSize(16); pdf.setFont('helvetica','bold');
+      pdf.setTextColor(192, 192, 192);
+      pdf.text(`🥈 Naib Johan: Rumah ${houses[1].name} (${houses[1].points||0} mata)`, 105, 185, { align: 'center' });
+    }
+    if (houses.length >= 3) {
+      pdf.setTextColor(205, 127, 50);
+      pdf.text(`🥉 Tempat Ketiga: Rumah ${houses[2].name} (${houses[2].points||0} mata)`, 105, 200, { align: 'center' });
+    }
+    
+    pdf.setFontSize(10); pdf.setFont('helvetica','italic');
+    pdf.setTextColor(180, 180, 180);
+    pdf.text(`Dijana: ${new Date().toLocaleString('ms-MY')}`, 105, 280, { align: 'center' });
+    
+    // ====== PAGE 2: OLAHRAGAWAN ======
+    pdf.addPage();
+    pdf.setFillColor(255, 255, 255);
+    pdf.rect(0, 0, 210, 297, 'F');
+    
+    pdf.setFillColor(10, 26, 61);
+    pdf.rect(0, 0, 210, 30, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(20); pdf.setFont('helvetica','bold');
+    pdf.text('ANUGERAH OLAHRAGAWAN', 105, 20, { align: 'center' });
+    
+    pdf.setTextColor(10, 26, 61);
+    pdf.setFontSize(80);
+    pdf.text('🏃', 105, 75, { align: 'center' });
+    
+    if (olahragawan.length > 0) {
+      const champ = olahragawan[0];
+      const h = housesMap[champ.houseId];
+      pdf.setFontSize(28); pdf.setFont('helvetica','bold');
+      pdf.text(champ.name.toUpperCase(), 105, 110, { align: 'center' });
+      
+      pdf.setFontSize(14); pdf.setFont('helvetica','normal');
+      if (h) pdf.text(`Rumah ${h.name}`, 105, 122, { align: 'center' });
+      
+      pdf.setFontSize(16); pdf.setFont('helvetica','bold');
+      pdf.text(`🥇 ${champ.gold}   🥈 ${champ.silver}   🥉 ${champ.bronze}`, 105, 140, { align: 'center' });
+      pdf.setFontSize(14); pdf.setFont('helvetica','normal');
+      pdf.text(`Jumlah ${champ.points} mata individu`, 105, 152, { align: 'center' });
+      
+      // Top 5 olahragawan table
+      pdf.autoTable({
+        startY: 170,
+        head: [['#', 'Nama', 'Rumah', '🥇', '🥈', '🥉', 'Mata']],
+        body: olahragawan.slice(0, 10).map((a, i) => [
+          i+1, a.name, housesMap[a.houseId]?.name||'-', a.gold, a.silver, a.bronze, a.points
+        ]),
+        headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
+        styles: { fontSize: 9 }
+      });
+    } else {
+      pdf.setFontSize(12); pdf.setTextColor(100, 100, 100);
+      pdf.text('Tiada atlet lelaki yang memenangi pingat', 105, 120, { align: 'center' });
+    }
+    
+    // ====== PAGE 3: OLAHRAGAWATI ======
+    pdf.addPage();
+    pdf.setFillColor(255, 255, 255);
+    pdf.rect(0, 0, 210, 297, 'F');
+    
+    pdf.setFillColor(10, 26, 61);
+    pdf.rect(0, 0, 210, 30, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(20); pdf.setFont('helvetica','bold');
+    pdf.text('ANUGERAH OLAHRAGAWATI', 105, 20, { align: 'center' });
+    
+    pdf.setTextColor(10, 26, 61);
+    pdf.setFontSize(80);
+    pdf.text('🏃‍♀️', 105, 75, { align: 'center' });
+    
+    if (olahragawati.length > 0) {
+      const champ = olahragawati[0];
+      const h = housesMap[champ.houseId];
+      pdf.setFontSize(28); pdf.setFont('helvetica','bold');
+      pdf.text(champ.name.toUpperCase(), 105, 110, { align: 'center' });
+      
+      pdf.setFontSize(14); pdf.setFont('helvetica','normal');
+      if (h) pdf.text(`Rumah ${h.name}`, 105, 122, { align: 'center' });
+      
+      pdf.setFontSize(16); pdf.setFont('helvetica','bold');
+      pdf.text(`🥇 ${champ.gold}   🥈 ${champ.silver}   🥉 ${champ.bronze}`, 105, 140, { align: 'center' });
+      pdf.setFontSize(14); pdf.setFont('helvetica','normal');
+      pdf.text(`Jumlah ${champ.points} mata individu`, 105, 152, { align: 'center' });
+      
+      pdf.autoTable({
+        startY: 170,
+        head: [['#', 'Nama', 'Rumah', '🥇', '🥈', '🥉', 'Mata']],
+        body: olahragawati.slice(0, 10).map((a, i) => [
+          i+1, a.name, housesMap[a.houseId]?.name||'-', a.gold, a.silver, a.bronze, a.points
+        ]),
+        headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
+        styles: { fontSize: 9 }
+      });
+    } else {
+      pdf.setFontSize(12); pdf.setTextColor(100, 100, 100);
+      pdf.text('Tiada atlet perempuan yang memenangi pingat', 105, 120, { align: 'center' });
+    }
+    
+    // ====== PAGE 4: KEDUDUKAN RUMAH SUKAN ======
+    pdf.addPage();
+    pdf.setFillColor(10, 26, 61);
+    pdf.rect(0, 0, 210, 30, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(20); pdf.setFont('helvetica','bold');
+    pdf.text('KEDUDUKAN RUMAH SUKAN', 105, 20, { align: 'center' });
+    
+    pdf.autoTable({
+      startY: 45,
+      head: [['#', 'Rumah Sukan', '🥇 Emas', '🥈 Perak', '🥉 Gangsa', 'Jumlah Mata']],
+      body: houses.map((h, i) => [i+1, h.name, h.gold||0, h.silver||0, h.bronze||0, h.points||0]),
+      headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
+      styles: { fontSize: 11, cellPadding: 5 },
+      didParseCell: (data) => {
+        if (data.row.index === 0 && data.section === 'body') {
+          data.cell.styles.fillColor = [255, 215, 0];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    });
+    
+    // Footer
+    const total = pdf.internal.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(8); pdf.setFont('helvetica','italic');
+      pdf.setTextColor(150, 150, 150);
+      pdf.text(`Skor2u Pro • Halaman ${i}/${total}`, 105, 290, { align: 'center' });
+    }
+    
+    pdf.save(`Upacara-Penutup-${new Date().toISOString().split('T')[0]}.pdf`);
+    showToast('PDF Anugerah dijana! 🏆', 'success');
+  } catch(err) {
+    console.error('PDF error:', err);
+    showToast('Error: ' + err.message, 'error');
+  }
 };
 
 // ============= SETTINGS =============

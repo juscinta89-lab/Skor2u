@@ -1,5 +1,5 @@
-// Skor2u Pro Service Worker v3.3 - Multi-Medal Same House
-const CACHE_NAME = 'skor2u-pro-v3.3.0';
+// Skor2u Pro Service Worker v3.4 - Closing Ceremony
+const CACHE_NAME = 'skor2u-pro-v3.4.0';
 const ASSETS = [
   './',
   './index.html',
