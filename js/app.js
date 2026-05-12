@@ -1329,35 +1329,89 @@ window.showManualResultModal = async function(eventId, acaraId) {
 };
 
 window.finalizeResult = async function(eventId, acaraId) {
-  const sid = window.currentUser.schoolId;
-  const acaraSnap = await getDoc(doc(db,'schools',sid,'events',eventId,'acara',acaraId));
-  const acara = acaraSnap.data();
-  const typeInfo = ACARA_TYPES[acara.acaraType];
+  console.log('[finalizeResult] Start:', { eventId, acaraId });
   
-  const partsSnap = await getDocs(collection(db,'schools',sid,'events',eventId,'acara',acaraId,'participants'));
-  const parts = []; partsSnap.forEach(d => parts.push({id:d.id, ...d.data(), value: d.data().measurement}));
-  const ranked = rankResults(parts, typeInfo.measurementType);
-  
-  if (ranked.length < 3) { showToast('Perlu minimum 3 peserta dengan catatan','warning'); return; }
-  
-  const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
-  const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
-  
-  // Top 3 ranked: rumah boleh sama (cth: Merah dapat #1 dan #2 = emas + perak)
-  await awardMedals(eventId, acaraId, {
-    gold: ranked[0].houseId,
-    silver: ranked[1].houseId,
-    bronze: ranked[2].houseId,
-    goldAthleteId: ranked[0].athleteId,
-    silverAthleteId: ranked[1].athleteId,
-    bronzeAthleteId: ranked[2].athleteId,
-    goldAthlete: ranked[0].athleteName,
-    silverAthlete: ranked[1].athleteName,
-    bronzeAthlete: ranked[2].athleteName,
-    goldValue: ranked[0].value,
-    silverValue: ranked[1].value,
-    bronzeValue: ranked[2].value
-  }, houses);
+  try {
+    const sid = window.currentUser.schoolId;
+    if (!sid) throw new Error('Tiada school ID');
+    
+    const acaraSnap = await getDoc(doc(db,'schools',sid,'events',eventId,'acara',acaraId));
+    if (!acaraSnap.exists()) throw new Error('Acara tidak dijumpai');
+    const acara = acaraSnap.data();
+    console.log('[finalizeResult] Acara:', acara);
+    
+    // FALLBACK: kalau acaraType tiada/invalid, default ke 'balapan' (paling biasa untuk olahraga)
+    let acaraType = acara.acaraType;
+    if (!acaraType || !ACARA_TYPES[acaraType]) {
+      console.warn('[finalizeResult] acaraType tiada/invalid, default ke balapan. Acara data:', acara);
+      acaraType = 'balapan';
+      // Update acara document supaya field acaraType wujud
+      try {
+        await updateDoc(doc(db,'schools',sid,'events',eventId,'acara',acaraId), { acaraType: 'balapan' });
+        console.log('[finalizeResult] Acara updated with acaraType=balapan');
+      } catch(e) { console.warn('Could not update acaraType:', e); }
+    }
+    
+    const typeInfo = ACARA_TYPES[acaraType];
+    console.log('[finalizeResult] typeInfo:', typeInfo);
+    
+    const partsSnap = await getDocs(collection(db,'schools',sid,'events',eventId,'acara',acaraId,'participants'));
+    const parts = [];
+    partsSnap.forEach(d => {
+      const data = d.data();
+      parts.push({
+        id: d.id,
+        athleteId: data.athleteId,
+        athleteName: data.athleteName || 'Unknown',
+        houseId: data.houseId,
+        value: data.measurement
+      });
+    });
+    console.log('[finalizeResult] Participants:', parts);
+    
+    const ranked = rankResults(parts, typeInfo.measurementType);
+    console.log('[finalizeResult] Ranked:', ranked);
+    
+    if (ranked.length < 3) {
+      showToast(`Perlu minimum 3 peserta dengan catatan (sekarang: ${ranked.length})`, 'warning');
+      return;
+    }
+    
+    // Validate top 3 have all required fields
+    for (let i = 0; i < 3; i++) {
+      const r = ranked[i];
+      if (!r.athleteId) {
+        console.error('[finalizeResult] Participant #'+(i+1)+' missing athleteId:', r);
+        throw new Error(`Peserta #${i+1} tiada athleteId. Sila buang dan tambah peserta semula.`);
+      }
+      if (!r.houseId) throw new Error(`Peserta #${i+1} (${r.athleteName}) tiada houseId`);
+      if (r.value == null) throw new Error(`Peserta #${i+1} (${r.athleteName}) tiada catatan`);
+    }
+    
+    const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
+    const houses = []; housesSnap.forEach(d => houses.push({id:d.id, ...d.data()}));
+    
+    const medalData = {
+      gold: ranked[0].houseId,
+      silver: ranked[1].houseId,
+      bronze: ranked[2].houseId,
+      goldAthleteId: ranked[0].athleteId,
+      silverAthleteId: ranked[1].athleteId,
+      bronzeAthleteId: ranked[2].athleteId,
+      goldAthlete: String(ranked[0].athleteName || ''),
+      silverAthlete: String(ranked[1].athleteName || ''),
+      bronzeAthlete: String(ranked[2].athleteName || ''),
+      goldValue: Number(ranked[0].value),
+      silverValue: Number(ranked[1].value),
+      bronzeValue: Number(ranked[2].value)
+    };
+    console.log('[finalizeResult] Medal data:', medalData);
+    
+    await awardMedals(eventId, acaraId, medalData, houses);
+  } catch(err) {
+    console.error('[finalizeResult] ERROR:', err);
+    showToast('Gagal: ' + err.message, 'error');
+  }
 };
 
 window.deleteResult = async function(eventId, acaraId) {
@@ -1414,34 +1468,45 @@ window.deleteResult = async function(eventId, acaraId) {
 };
 
 async function awardMedals(eventId, acaraId, medalData, houses) {
+  console.log('[awardMedals] START', { eventId, acaraId, medalData });
   const sid = window.currentUser.schoolId;
   
   try {
+    if (!sid) throw new Error('Tiada schoolId');
+    if (!medalData.gold || !medalData.silver || !medalData.bronze) {
+      throw new Error('Gold/silver/bronze houseId mesti ada');
+    }
+    
+    // Validate athleteIds berbeza (kalau ada)
+    const athleteIds = [medalData.goldAthleteId, medalData.silverAthleteId, medalData.bronzeAthleteId].filter(Boolean);
+    if (athleteIds.length > 0 && new Set(athleteIds).size !== athleteIds.length) {
+      throw new Error('Peserta sama tidak boleh dapat 2 pingat dari acara yang sama');
+    }
+    
     const resultRef = doc(db,'schools',sid,'results',`${eventId}_${acaraId}`);
+    console.log('[awardMedals] Fetching existing result...');
     const existing = await getDoc(resultRef);
+    console.log('[awardMedals] Existing:', existing.exists() ? existing.data() : 'none');
     
     const acaraSnap = await getDoc(doc(db,'schools',sid,'events',eventId,'acara',acaraId));
     if (!acaraSnap.exists()) throw new Error('Acara tidak dijumpai');
     const acara = acaraSnap.data();
     
-    // Validate: peserta (athleteId) mesti berbeza untuk setiap pingat
-    // Rumah BOLEH sama — sebab 2 peserta dari rumah sama boleh layak ke akhir
-    const athleteIds = [medalData.goldAthleteId, medalData.silverAthleteId, medalData.bronzeAthleteId].filter(Boolean);
-    if (new Set(athleteIds).size !== athleteIds.length) {
-      throw new Error('Peserta sama tidak boleh dapat 2 pingat dari acara yang sama');
-    }
-    
-    // Re-fetch latest house data
+    // Re-fetch latest houses data
+    console.log('[awardMedals] Fetching houses...');
     const housesMap = {};
     for (const h of houses) {
       const fresh = await getDoc(doc(db,'schools',sid,'houses',h.id));
       if (fresh.exists()) housesMap[h.id] = { id: h.id, ...fresh.data() };
     }
     
-    // Calculate net delta per house: aggregate all changes first, then apply once
-    // RUMAH boleh dapat multiple pingat — delta akan accumulate
-    const delta = {};
+    // Validate all needed houses exist
+    for (const id of [medalData.gold, medalData.silver, medalData.bronze]) {
+      if (!housesMap[id]) throw new Error(`Rumah ${id} tidak dijumpai`);
+    }
     
+    // Calculate net delta per house
+    const delta = {};
     const addDelta = (houseId, pts, medalType) => {
       if (!houseId) return;
       if (!delta[houseId]) delta[houseId] = { points: 0, gold: 0, silver: 0, bronze: 0 };
@@ -1449,69 +1514,82 @@ async function awardMedals(eventId, acaraId, medalData, houses) {
       delta[houseId][medalType] += pts > 0 ? 1 : -1;
     };
     
-    // Step 1: Revert old result if exists
     if (existing.exists()) {
       const old = existing.data();
+      console.log('[awardMedals] Reverting old result');
       if (old.gold) addDelta(old.gold, -10, 'gold');
       if (old.silver) addDelta(old.silver, -5, 'silver');
       if (old.bronze) addDelta(old.bronze, -3, 'bronze');
     }
     
-    // Step 2: Add new awards
-    // CONTOH: kalau emas + perak dari rumah Merah, Merah dapat +10 dan +5 = +15 mata
-    if (medalData.gold) addDelta(medalData.gold, 10, 'gold');
-    if (medalData.silver) addDelta(medalData.silver, 5, 'silver');
-    if (medalData.bronze) addDelta(medalData.bronze, 3, 'bronze');
+    addDelta(medalData.gold, 10, 'gold');
+    addDelta(medalData.silver, 5, 'silver');
+    addDelta(medalData.bronze, 3, 'bronze');
     
-    // Step 3: Apply net delta per house
-    const batch = writeBatch(db);
+    console.log('[awardMedals] Delta:', delta);
     
+    // STEP 1: Update houses (one by one for debugging)
     for (const [houseId, d] of Object.entries(delta)) {
       const h = housesMap[houseId];
-      if (!h) {
-        console.warn('House not found:', houseId);
-        continue;
-      }
-      batch.update(doc(db,'schools',sid,'houses',houseId), {
+      if (!h) continue;
+      const newData = {
         points: Math.max(0, (h.points || 0) + d.points),
         gold: Math.max(0, (h.gold || 0) + d.gold),
         silver: Math.max(0, (h.silver || 0) + d.silver),
         bronze: Math.max(0, (h.bronze || 0) + d.bronze)
-      });
+      };
+      console.log(`[awardMedals] Updating house ${h.name}:`, newData);
+      await updateDoc(doc(db,'schools',sid,'houses',houseId), newData);
     }
+    console.log('[awardMedals] ✓ All houses updated');
     
-    // Step 4: Save result
-    batch.set(resultRef, {
-      eventId, acaraId,
-      acaraName: acara.name,
-      acaraType: acara.acaraType || 'team',
-      gold: medalData.gold || null,
-      silver: medalData.silver || null,
-      bronze: medalData.bronze || null,
+    // STEP 2: Save result document
+    const resultDoc = {
+      eventId: String(eventId),
+      acaraId: String(acaraId),
+      acaraName: String(acara.name || ''),
+      acaraType: String(acara.acaraType || 'team'),
+      gold: medalData.gold,
+      silver: medalData.silver,
+      bronze: medalData.bronze,
       goldAthlete: medalData.goldAthlete || null,
       silverAthlete: medalData.silverAthlete || null,
       bronzeAthlete: medalData.bronzeAthlete || null,
       goldAthleteId: medalData.goldAthleteId || null,
       silverAthleteId: medalData.silverAthleteId || null,
       bronzeAthleteId: medalData.bronzeAthleteId || null,
-      goldValue: medalData.goldValue ?? null,
-      silverValue: medalData.silverValue ?? null,
-      bronzeValue: medalData.bronzeValue ?? null,
-      recordedBy: window.currentUser.email,
+      goldValue: medalData.goldValue != null && !isNaN(Number(medalData.goldValue)) ? Number(medalData.goldValue) : null,
+      silverValue: medalData.silverValue != null && !isNaN(Number(medalData.silverValue)) ? Number(medalData.silverValue) : null,
+      bronzeValue: medalData.bronzeValue != null && !isNaN(Number(medalData.bronzeValue)) ? Number(medalData.bronzeValue) : null,
+      recordedBy: String(window.currentUser.email || ''),
       recordedAt: serverTimestamp(),
       isUpdate: existing.exists()
-    });
+    };
+    console.log('[awardMedals] Saving result:', resultDoc);
+    await setDoc(resultRef, resultDoc);
+    console.log('[awardMedals] ✓ Result saved');
     
-    batch.update(doc(db,'schools',sid,'events',eventId,'acara',acaraId), {
-      completed: true,
-      lastResultAt: serverTimestamp()
-    });
+    // STEP 3: Mark acara completed
+    try {
+      await updateDoc(doc(db,'schools',sid,'events',eventId,'acara',acaraId), {
+        completed: true
+      });
+      console.log('[awardMedals] ✓ Acara marked complete');
+    } catch(e) {
+      console.warn('[awardMedals] Could not mark acara complete:', e.message);
+      // Not critical, continue
+    }
     
-    await batch.commit();
-    showToast(existing.exists() ? 'Keputusan dikemaskini! 🔄' : 'Keputusan disahkan! 🎉', 'success');
+    showToast(existing.exists() ? '✅ Keputusan dikemaskini! 🔄' : '✅ Keputusan disahkan! 🎉', 'success');
+    console.log('[awardMedals] ✓✓✓ DONE');
   } catch(err) {
-    console.error('awardMedals error:', err);
-    showToast('Error: ' + err.message, 'error');
+    console.error('[awardMedals] ❌ ERROR:', err);
+    console.error('[awardMedals] Error code:', err.code, 'Message:', err.message);
+    if (err.code === 'permission-denied') {
+      showToast('❌ Akses ditolak - sila semak Firestore rules', 'error');
+    } else {
+      showToast('❌ ' + (err.message || 'Ralat'), 'error');
+    }
   }
 }
 
@@ -1723,7 +1801,7 @@ window.exportEventPDF = async function(eventId) {
       pdf.setFont('helvetica','bold');
       pdf.setFillColor(240, 240, 240);
       pdf.rect(14, yPos-5, 182, 8, 'F');
-      pdf.text(`📋 ${ROUND_TYPES[roundKey]}`, 16, yPos);
+      pdf.text(`[ROUND] ${ROUND_TYPES[roundKey]}`, 16, yPos);
       yPos += 5;
       
       pdf.autoTable({
@@ -1798,7 +1876,7 @@ window.exportResultsPDF = async function(eventId) {
     // Results table
     pdf.autoTable({
       startY: 55,
-      head: [['Acara', 'Emas 🥇', 'Perak 🥈', 'Gangsa 🥉', 'Catatan']],
+      head: [['Acara', 'Emas', 'Perak', 'Gangsa', 'Catatan']],
       body: results.map(r => {
         const t = ACARA_TYPES[r.acaraType] || ACARA_TYPES.balapan;
         return [
@@ -2195,78 +2273,392 @@ function renderLiveScoreboard() {
       <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
         <div>
           <h1 class="font-display font-bold text-3xl flex items-center gap-3"><span class="live-dot"></span>Live Scoreboard</h1>
-          <p class="text-sm mt-1" style="color:var(--text-secondary)">Update realtime — auto refresh</p>
+          <p class="text-sm mt-1" style="color:var(--text-secondary)">Update realtime — auto refresh • <span id="last-update-time">Sedang dimuatkan...</span></p>
         </div>
-        <button onclick="toggleFullscreen()" class="btn-secondary text-sm">⛶ Fullscreen</button>
+        <div class="flex gap-2">
+          <button onclick="toggleFullscreen()" class="btn-secondary text-sm">⛶ Skrin Penuh</button>
+        </div>
       </div>
+      
+      <!-- Quick Stats Bar -->
+      <div id="live-stats-bar" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6"></div>
+      
+      <!-- Champion Spotlight (top rumah) -->
+      <div id="live-champion-spotlight" class="mb-6"></div>
+      
+      <!-- Main Board -->
       <div id="live-board" class="space-y-6"></div>
     </div>
   `;
   
   const sid = window.currentUser.schoolId;
+  const updateTimestamp = () => {
+    const el = document.getElementById('last-update-time');
+    if (el) el.textContent = 'Update: ' + new Date().toLocaleTimeString('ms-MY');
+  };
+  
+  // === HOUSES LISTENER ===
   unsubscribers.push(onSnapshot(query(collection(db,'schools',sid,'houses')), (snap) => {
+    updateTimestamp();
     const board = document.getElementById('live-board');
     if (!board) return;
-    if (snap.size === 0) { board.innerHTML = '<div class="glass-card p-12 text-center"><div class="text-6xl mb-4">📊</div><p style="color:var(--text-secondary)">Tiada data rumah</p></div>'; return; }
+    
+    if (snap.size === 0) {
+      board.innerHTML = '<div class="glass-card p-12 text-center"><div class="text-6xl mb-4">📊</div><p style="color:var(--text-secondary)">Tiada data rumah</p></div>';
+      return;
+    }
     
     const houses = []; snap.forEach(d => houses.push({id:d.id, ...d.data()}));
     houses.sort((a,b) => (b.points||0)-(a.points||0));
     const max = Math.max(...houses.map(h=>h.points||0), 1);
+    const totalPoints = houses.reduce((sum, h) => sum + (h.points||0), 0);
     
+    // === STATS BAR ===
+    const totalMedals = houses.reduce((sum, h) => sum + (h.gold||0) + (h.silver||0) + (h.bronze||0), 0);
+    const totalGold = houses.reduce((sum, h) => sum + (h.gold||0), 0);
+    const statsBar = document.getElementById('live-stats-bar');
+    if (statsBar) {
+      statsBar.innerHTML = `
+        <div class="stat-card text-center">
+          <div class="text-xs mb-1" style="color:var(--text-secondary)">Rumah Sukan</div>
+          <div class="font-display font-bold text-2xl text-neon-blue">${houses.length}</div>
+        </div>
+        <div class="stat-card text-center">
+          <div class="text-xs mb-1" style="color:var(--text-secondary)">Jumlah Mata</div>
+          <div class="font-display font-bold text-2xl" style="color:var(--accent-2)">${totalPoints}</div>
+        </div>
+        <div class="stat-card text-center">
+          <div class="text-xs mb-1" style="color:var(--text-secondary)">Pingat Diaward</div>
+          <div class="font-display font-bold text-2xl text-yellow-500">${totalMedals}</div>
+        </div>
+        <div class="stat-card text-center">
+          <div class="text-xs mb-1" style="color:var(--text-secondary)">Acara Selesai</div>
+          <div class="font-display font-bold text-2xl text-green-500">${totalGold}</div>
+        </div>
+      `;
+    }
+    
+    // === CHAMPION SPOTLIGHT (current leader) ===
+    const spotlightEl = document.getElementById('live-champion-spotlight');
+    if (spotlightEl && houses.length > 0 && totalPoints > 0) {
+      const leader = houses[0];
+      const gap = houses.length > 1 ? (leader.points||0) - (houses[1].points||0) : 0;
+      spotlightEl.innerHTML = `
+        <div class="glass-card p-5 relative overflow-hidden" style="border:2px solid ${leader.color||'#fbbf24'}">
+          <div class="absolute inset-0 opacity-10" style="background:linear-gradient(135deg, ${leader.color||'#fbbf24'} 0%, transparent 70%)"></div>
+          <div class="relative flex items-center gap-4 flex-wrap">
+            <div class="text-5xl">🏆</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-xs uppercase tracking-wider" style="color:var(--text-secondary)">Pendahulu Semasa</div>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="w-4 h-4 rounded-full" style="background:${leader.color||'#fbbf24'}"></span>
+                <span class="font-display font-bold text-2xl sm:text-3xl">Rumah ${leader.name}</span>
+              </div>
+              <div class="text-xs mt-1" style="color:var(--text-secondary)">
+                ${gap > 0 ? `Mendahului dengan ${gap} mata` : 'Memimpin'}
+                • 🥇 ${leader.gold||0} • 🥈 ${leader.silver||0} • 🥉 ${leader.bronze||0}
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="font-display font-bold text-4xl sm:text-5xl text-neon-blue">${leader.points||0}</div>
+              <div class="text-xs" style="color:var(--text-muted)">mata</div>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (spotlightEl) {
+      spotlightEl.innerHTML = '';
+    }
+    
+    // === RANKINGS ===
     board.innerHTML = `
       <div class="glass-card p-6">
         <h2 class="font-display font-bold text-2xl mb-6 text-center">🏆 Kedudukan Rumah Sukan</h2>
         <div class="space-y-4">
-          ${houses.map((h,i) => `
-            <div class="slide-in" style="animation-delay:${i*0.1}s">
-              <div class="flex items-center gap-4 mb-2">
-                <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${i===0?'medal-gold':i===1?'medal-silver':i===2?'medal-bronze':''}" style="${i>2?'background:var(--bg-elevated);border:1px solid var(--border)':''}">${i+1}</div>
-                <div class="flex-1">
-                  <div class="flex items-center justify-between mb-1">
-                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full" style="background:${h.color||'#06b6d4'}"></span><span class="font-display font-bold text-lg">${h.name}</span></div>
-                    <span class="font-display font-bold text-2xl text-neon-blue">${h.points||0}</span>
-                  </div>
-                  <div class="h-3 rounded-full overflow-hidden" style="background:var(--bg-elevated)">
-                    <div class="h-full rounded-full transition-all duration-1000" style="width:${(h.points||0)/max*100}%;background:linear-gradient(90deg,${h.color||'#06b6d4'},#00d4ff)"></div>
-                  </div>
-                  <div class="flex gap-4 mt-2 text-xs" style="color:var(--text-secondary)">
-                    <span>🥇 ${h.gold||0}</span><span>🥈 ${h.silver||0}</span><span>🥉 ${h.bronze||0}</span>
+          ${houses.map((h,i) => {
+            const gap = i > 0 ? (houses[i-1].points||0) - (h.points||0) : 0;
+            return `
+              <div class="slide-in" style="animation-delay:${i*0.1}s">
+                <div class="flex items-center gap-4 mb-2">
+                  <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${i===0?'medal-gold':i===1?'medal-silver':i===2?'medal-bronze':''}" style="${i>2?'background:var(--bg-elevated);border:1px solid var(--border)':''}">${i+1}</div>
+                  <div class="flex-1">
+                    <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+                      <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full" style="background:${h.color||'#06b6d4'}"></span>
+                        <span class="font-display font-bold text-lg">${h.name}</span>
+                        ${i > 0 && gap > 0 ? `<span class="text-xs px-2 py-0.5 rounded" style="background:rgba(239,68,68,0.15);color:#ef4444">-${gap}</span>` : ''}
+                        ${i === 0 && houses.length > 1 ? `<span class="text-xs px-2 py-0.5 rounded" style="background:rgba(16,185,129,0.15);color:#10b981">↑ Pendahulu</span>` : ''}
+                      </div>
+                      <span class="font-display font-bold text-2xl text-neon-blue">${h.points||0}</span>
+                    </div>
+                    <div class="h-3 rounded-full overflow-hidden" style="background:var(--bg-elevated)">
+                      <div class="h-full rounded-full transition-all duration-1000" style="width:${(h.points||0)/max*100}%;background:linear-gradient(90deg,${h.color||'#06b6d4'},#00d4ff)"></div>
+                    </div>
+                    <div class="flex gap-4 mt-2 text-xs" style="color:var(--text-secondary)">
+                      <span>🥇 ${h.gold||0} Emas</span>
+                      <span>🥈 ${h.silver||0} Perak</span>
+                      <span>🥉 ${h.bronze||0} Gangsa</span>
+                      <span class="ml-auto">${((h.gold||0)+(h.silver||0)+(h.bronze||0))} pingat</span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          `).join('')}
+            `;
+          }).join('')}
         </div>
       </div>
     `;
   }));
   
+  // === RESULTS LISTENER (with athletes & events info) ===
   unsubscribers.push(onSnapshot(query(collection(db,'schools',sid,'results')), async (snap) => {
-    if (snap.size === 0) return;
-    const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
+    updateTimestamp();
+    if (snap.size === 0) {
+      // Clear the recent results section if exists
+      const sec = document.getElementById('recent-results-section');
+      if (sec) sec.remove();
+      const sec2 = document.getElementById('top-athletes-section');
+      if (sec2) sec2.remove();
+      return;
+    }
+    
+    // Fetch supporting data
+    const [housesSnap, athletesSnap, eventsSnap] = await Promise.all([
+      getDocs(collection(db,'schools',sid,'houses')),
+      getDocs(collection(db,'schools',sid,'athletes')),
+      getDocs(collection(db,'schools',sid,'events'))
+    ]);
     const housesMap = {}; housesSnap.forEach(d => housesMap[d.id] = d.data());
+    const athletesMap = {}; athletesSnap.forEach(d => athletesMap[d.id] = { id: d.id, ...d.data() });
+    const eventsMap = {}; eventsSnap.forEach(d => eventsMap[d.id] = d.data());
     
     const results = []; snap.forEach(d => results.push({id:d.id, ...d.data()}));
     results.sort((a,b) => (b.recordedAt?.seconds||0)-(a.recordedAt?.seconds||0));
     
-    const html = results.slice(0,10).map(r => `
-      <div class="p-3 rounded-lg fade-in" style="background:var(--bg-elevated)">
-        <div class="font-medium text-sm mb-2">${r.acaraName}</div>
-        <div class="flex flex-wrap gap-2 text-xs">
-          <span class="px-2 py-1 rounded medal-gold font-bold">🥇 ${housesMap[r.gold]?.name||'?'}</span>
-          <span class="px-2 py-1 rounded medal-silver font-bold">🥈 ${housesMap[r.silver]?.name||'?'}</span>
-          <span class="px-2 py-1 rounded medal-bronze font-bold">🥉 ${housesMap[r.bronze]?.name||'?'}</span>
+    // === TOP ATHLETES CALCULATION ===
+    const athleteStats = {};
+    results.forEach(r => {
+      const award = (athId, name, type, pts) => {
+        if (!athId) return;
+        const ath = athletesMap[athId];
+        if (!athleteStats[athId]) {
+          athleteStats[athId] = {
+            id: athId,
+            name: name || ath?.name || 'Unknown',
+            gender: ath?.gender || 'lelaki',
+            houseId: ath?.houseId,
+            gold: 0, silver: 0, bronze: 0, points: 0
+          };
+        }
+        athleteStats[athId][type]++;
+        athleteStats[athId].points += pts;
+      };
+      award(r.goldAthleteId, r.goldAthlete, 'gold', 10);
+      award(r.silverAthleteId, r.silverAthlete, 'silver', 5);
+      award(r.bronzeAthleteId, r.bronzeAthlete, 'bronze', 3);
+    });
+    
+    const sortedAthletes = Object.values(athleteStats).sort((a, b) => {
+      if (b.gold !== a.gold) return b.gold - a.gold;
+      if (b.silver !== a.silver) return b.silver - a.silver;
+      if (b.bronze !== a.bronze) return b.bronze - a.bronze;
+      return b.points - a.points;
+    });
+    
+    const topLelaki = sortedAthletes.filter(a => a.gender === 'lelaki').slice(0, 3);
+    const topPerempuan = sortedAthletes.filter(a => a.gender === 'perempuan').slice(0, 3);
+    
+    // === RECENT RESULTS HTML (with athlete names + measurements) ===
+    const recentHTML = results.slice(0, 8).map(r => {
+      const evt = eventsMap[r.eventId];
+      const goldHouse = housesMap[r.gold];
+      const silverHouse = housesMap[r.silver];
+      const bronzeHouse = housesMap[r.bronze];
+      
+      const timeAgo = r.recordedAt?.seconds 
+        ? formatTimeAgo(r.recordedAt.seconds)
+        : 'baru';
+      
+      return `
+        <div class="p-3 rounded-lg fade-in" style="background:var(--bg-elevated)">
+          <div class="flex items-start justify-between gap-2 mb-2 flex-wrap">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-sm">${r.acaraName || 'Acara'}</div>
+              ${evt ? `<div class="text-xs" style="color:var(--text-muted)">${evt.name}</div>` : ''}
+            </div>
+            <div class="text-xs" style="color:var(--text-muted)">${timeAgo}</div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div class="p-2 rounded medal-gold">
+              <div class="font-bold flex items-center gap-1">🥇 ${goldHouse?.name||'?'}</div>
+              ${r.goldAthlete ? `<div class="text-xs opacity-90 truncate">${r.goldAthlete}</div>` : ''}
+              ${r.goldValue != null ? `<div class="text-xs font-mono opacity-90">${formatMeasurement(r.goldValue, r.acaraType === 'padang' ? 'distance' : r.acaraType === 'balapan' ? 'time' : 'score')}</div>` : ''}
+            </div>
+            <div class="p-2 rounded medal-silver">
+              <div class="font-bold flex items-center gap-1">🥈 ${silverHouse?.name||'?'}</div>
+              ${r.silverAthlete ? `<div class="text-xs opacity-90 truncate">${r.silverAthlete}</div>` : ''}
+              ${r.silverValue != null ? `<div class="text-xs font-mono opacity-90">${formatMeasurement(r.silverValue, r.acaraType === 'padang' ? 'distance' : r.acaraType === 'balapan' ? 'time' : 'score')}</div>` : ''}
+            </div>
+            <div class="p-2 rounded medal-bronze">
+              <div class="font-bold flex items-center gap-1">🥉 ${bronzeHouse?.name||'?'}</div>
+              ${r.bronzeAthlete ? `<div class="text-xs opacity-90 truncate">${r.bronzeAthlete}</div>` : ''}
+              ${r.bronzeValue != null ? `<div class="text-xs font-mono opacity-90">${formatMeasurement(r.bronzeValue, r.acaraType === 'padang' ? 'distance' : r.acaraType === 'balapan' ? 'time' : 'score')}</div>` : ''}
+            </div>
+          </div>
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
     
     const board = document.getElementById('live-board');
-    if (board && !document.getElementById('recent-results-section')) {
-      board.insertAdjacentHTML('beforeend', `<div id="recent-results-section" class="glass-card p-6"><h2 class="font-display font-bold text-xl mb-4">📋 Keputusan Terkini</h2><div id="recent-results-list" class="space-y-2">${html}</div></div>`);
+    if (!board) return;
+    
+    // === TOP ATHLETES SECTION ===
+    const renderAthleteList = (title, icon, list) => {
+      if (list.length === 0) return '';
+      return `
+        <div>
+          <div class="text-xs font-bold mb-2 flex items-center gap-1" style="color:var(--text-secondary)">${icon} ${title}</div>
+          <div class="space-y-1">
+            ${list.map((a, i) => {
+              const h = housesMap[a.houseId];
+              return `
+                <div class="flex items-center gap-2 p-2 rounded text-xs" style="background:var(--bg-elevated)">
+                  <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold ${i===0?'medal-gold':i===1?'medal-silver':'medal-bronze'}" style="font-size:10px">${i+1}</span>
+                  <span class="flex-1 min-w-0 truncate font-medium">${a.name}</span>
+                  ${h ? `<span class="w-2 h-2 rounded-full" style="background:${h.color}"></span>` : ''}
+                  <span class="font-mono opacity-70">🥇${a.gold} 🥈${a.silver} 🥉${a.bronze}</span>
+                  <span class="font-bold text-neon-blue ml-1">${a.points}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    };
+    
+    const topAthletesHTML = `
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        ${renderAthleteList('Top Lelaki (Calon Olahragawan)', '👨', topLelaki)}
+        ${renderAthleteList('Top Perempuan (Calon Olahragawati)', '👩', topPerempuan)}
+      </div>
+    `;
+    
+    if (!document.getElementById('top-athletes-section') && (topLelaki.length > 0 || topPerempuan.length > 0)) {
+      board.insertAdjacentHTML('beforeend', `<div id="top-athletes-section" class="glass-card p-6"><h2 class="font-display font-bold text-xl mb-4">⭐ Atlet Pendahulu</h2>${topAthletesHTML}</div>`);
+    } else if (document.getElementById('top-athletes-section')) {
+      document.getElementById('top-athletes-section').innerHTML = `<h2 class="font-display font-bold text-xl mb-4">⭐ Atlet Pendahulu</h2>${topAthletesHTML}`;
+    }
+    
+    // === RECENT RESULTS SECTION ===
+    if (!document.getElementById('recent-results-section')) {
+      board.insertAdjacentHTML('beforeend', `<div id="recent-results-section" class="glass-card p-6"><div class="flex items-center justify-between mb-4"><h2 class="font-display font-bold text-xl">📋 Keputusan Terkini</h2><span class="badge badge-info">${results.length} acara</span></div><div id="recent-results-list" class="space-y-2">${recentHTML}</div></div>`);
     } else if (document.getElementById('recent-results-list')) {
-      document.getElementById('recent-results-list').innerHTML = html;
+      document.getElementById('recent-results-list').innerHTML = recentHTML;
     }
   }));
+  
+  // === ACARA / EVENTS LISTENER (for in-progress events) ===
+  unsubscribers.push(onSnapshot(query(collection(db,'schools',sid,'events')), async (eventSnap) => {
+    const events = []; eventSnap.forEach(d => events.push({id:d.id, ...d.data()}));
+    const liveEvents = events.filter(e => e.status === 'live');
+    
+    const board = document.getElementById('live-board');
+    if (!board) return;
+    
+    // Remove old in-progress section
+    const oldSec = document.getElementById('in-progress-section');
+    if (oldSec) oldSec.remove();
+    
+    if (liveEvents.length === 0) return;
+    
+    // For each live event, get acara count info
+    const liveEventCards = [];
+    for (const evt of liveEvents) {
+      const acaraSnap = await getDocs(collection(db,'schools',sid,'events',evt.id,'acara'));
+      let total = 0, completed = 0, pending = 0;
+      const pendingNames = [];
+      acaraSnap.forEach(d => {
+        total++;
+        const a = d.data();
+        if (a.completed) completed++;
+        else {
+          pending++;
+          if (pendingNames.length < 5) pendingNames.push(a.name);
+        }
+      });
+      
+      const progress = total > 0 ? (completed / total) * 100 : 0;
+      
+      liveEventCards.push(`
+        <div class="p-4 rounded-lg" style="background:var(--bg-elevated);border-left:4px solid #ef4444">
+          <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="live-dot"></span>
+                <span class="font-display font-bold">${evt.name}</span>
+              </div>
+              <div class="text-xs mt-1" style="color:var(--text-muted)">${evt.type || ''} • ${evt.location || ''}</div>
+            </div>
+            <span class="badge badge-danger">🔴 LIVE</span>
+          </div>
+          
+          <div class="grid grid-cols-3 gap-2 text-xs mb-3">
+            <div class="text-center p-2 rounded" style="background:var(--bg-main)">
+              <div class="font-bold text-lg" style="color:var(--accent-2)">${total}</div>
+              <div style="color:var(--text-muted)">Jumlah Acara</div>
+            </div>
+            <div class="text-center p-2 rounded" style="background:var(--bg-main)">
+              <div class="font-bold text-lg text-green-500">${completed}</div>
+              <div style="color:var(--text-muted)">Selesai</div>
+            </div>
+            <div class="text-center p-2 rounded" style="background:var(--bg-main)">
+              <div class="font-bold text-lg text-yellow-500">${pending}</div>
+              <div style="color:var(--text-muted)">Belum Selesai</div>
+            </div>
+          </div>
+          
+          <div class="mb-2">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span style="color:var(--text-secondary)">Progress</span>
+              <span style="color:var(--text-secondary)">${Math.round(progress)}%</span>
+            </div>
+            <div class="h-2 rounded-full overflow-hidden" style="background:var(--bg-main)">
+              <div class="h-full transition-all duration-1000" style="width:${progress}%;background:linear-gradient(90deg,#10b981,#34d399)"></div>
+            </div>
+          </div>
+          
+          ${pendingNames.length > 0 ? `
+            <div class="text-xs mt-3" style="color:var(--text-secondary)">
+              <strong>Acara akan datang:</strong> ${pendingNames.join(', ')}${pending > 5 ? ` & ${pending - 5} lagi` : ''}
+            </div>
+          ` : ''}
+        </div>
+      `);
+    }
+    
+    if (liveEventCards.length > 0) {
+      const html = `<div id="in-progress-section" class="glass-card p-6">
+        <h2 class="font-display font-bold text-xl mb-4">⚡ Sedang Berlangsung</h2>
+        <div class="space-y-3">${liveEventCards.join('')}</div>
+      </div>`;
+      // Insert after live-board's first child (kedudukan rumah)
+      const firstChild = board.firstElementChild;
+      if (firstChild) {
+        firstChild.insertAdjacentHTML('afterend', html);
+      } else {
+        board.insertAdjacentHTML('beforeend', html);
+      }
+    }
+  }));
+}
+
+// Helper: format time ago in Bahasa Malaysia
+function formatTimeAgo(seconds) {
+  const diff = Math.floor(Date.now()/1000 - seconds);
+  if (diff < 60) return `${diff}s lalu`;
+  if (diff < 3600) return `${Math.floor(diff/60)} min lalu`;
+  if (diff < 86400) return `${Math.floor(diff/3600)} jam lalu`;
+  return `${Math.floor(diff/86400)} hari lalu`;
 }
 
 window.toggleFullscreen = function() {
@@ -2343,7 +2735,7 @@ window.exportLeaderboardPDF = async function() {
     
     pdf.autoTable({
       startY: 35,
-      head: [['#', 'Rumah Sukan', 'Emas 🥇', 'Perak 🥈', 'Gangsa 🥉', 'Jumlah Mata']],
+      head: [['#', 'Rumah Sukan', 'Emas', 'Perak', 'Gangsa', 'Jumlah Mata']],
       body: houses.map((h,i) => [i+1, h.name, h.gold||0, h.silver||0, h.bronze||0, h.points||0]),
       headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
       styles: { fontSize: 11, cellPadding: 5 }
@@ -2752,7 +3144,7 @@ window.exportPenutupPDF = async function() {
     
     // Trophy
     pdf.setFontSize(80); pdf.setTextColor(255, 215, 0);
-    pdf.text('🏆', 105, 85, { align: 'center' });
+    pdf.setFontSize(24); pdf.setFont('helvetica','bold'); pdf.text('* JUARA *', 105, 85, { align: 'center' });
     
     // Champion
     pdf.setFontSize(20); pdf.setFont('helvetica','bold');
@@ -2771,18 +3163,18 @@ window.exportPenutupPDF = async function() {
       
       pdf.setFontSize(14);
       pdf.setTextColor(255, 255, 255);
-      pdf.text(`🥇 ${champion.gold||0} Emas    🥈 ${champion.silver||0} Perak    🥉 ${champion.bronze||0} Gangsa`, 105, 158, { align: 'center' });
+      pdf.text(`Emas: ${champion.gold||0}    Perak: ${champion.silver||0}    Gangsa: ${champion.bronze||0}`, 105, 158, { align: 'center' });
     }
     
     // Naib Johan & Ketiga
     if (houses.length >= 2) {
       pdf.setFontSize(16); pdf.setFont('helvetica','bold');
       pdf.setTextColor(192, 192, 192);
-      pdf.text(`🥈 Naib Johan: Rumah ${houses[1].name} (${houses[1].points||0} mata)`, 105, 185, { align: 'center' });
+      pdf.text(`Naib Johan: Rumah ${houses[1].name} (${houses[1].points||0} mata)`, 105, 185, { align: 'center' });
     }
     if (houses.length >= 3) {
       pdf.setTextColor(205, 127, 50);
-      pdf.text(`🥉 Tempat Ketiga: Rumah ${houses[2].name} (${houses[2].points||0} mata)`, 105, 200, { align: 'center' });
+      pdf.text(`Tempat Ketiga: Rumah ${houses[2].name} (${houses[2].points||0} mata)`, 105, 200, { align: 'center' });
     }
     
     pdf.setFontSize(10); pdf.setFont('helvetica','italic');
@@ -2802,7 +3194,7 @@ window.exportPenutupPDF = async function() {
     
     pdf.setTextColor(10, 26, 61);
     pdf.setFontSize(80);
-    pdf.text('🏃', 105, 75, { align: 'center' });
+    pdf.setFontSize(24); pdf.setFont('helvetica','bold'); pdf.text('* OLAHRAGAWAN *', 105, 75, { align: 'center' });
     
     if (olahragawan.length > 0) {
       const champ = olahragawan[0];
@@ -2814,14 +3206,14 @@ window.exportPenutupPDF = async function() {
       if (h) pdf.text(`Rumah ${h.name}`, 105, 122, { align: 'center' });
       
       pdf.setFontSize(16); pdf.setFont('helvetica','bold');
-      pdf.text(`🥇 ${champ.gold}   🥈 ${champ.silver}   🥉 ${champ.bronze}`, 105, 140, { align: 'center' });
+      pdf.text(`Emas: ${champ.gold}    Perak: ${champ.silver}    Gangsa: ${champ.bronze}`, 105, 140, { align: 'center' });
       pdf.setFontSize(14); pdf.setFont('helvetica','normal');
       pdf.text(`Jumlah ${champ.points} mata individu`, 105, 152, { align: 'center' });
       
       // Top 5 olahragawan table
       pdf.autoTable({
         startY: 170,
-        head: [['#', 'Nama', 'Rumah', '🥇', '🥈', '🥉', 'Mata']],
+        head: [['#', 'Nama', 'Rumah', 'Emas', 'Perak', 'Gangsa', 'Mata']],
         body: olahragawan.slice(0, 10).map((a, i) => [
           i+1, a.name, housesMap[a.houseId]?.name||'-', a.gold, a.silver, a.bronze, a.points
         ]),
@@ -2846,7 +3238,7 @@ window.exportPenutupPDF = async function() {
     
     pdf.setTextColor(10, 26, 61);
     pdf.setFontSize(80);
-    pdf.text('🏃‍♀️', 105, 75, { align: 'center' });
+    pdf.setFontSize(24); pdf.setFont('helvetica','bold'); pdf.text('* OLAHRAGAWATI *', 105, 75, { align: 'center' });
     
     if (olahragawati.length > 0) {
       const champ = olahragawati[0];
@@ -2858,13 +3250,13 @@ window.exportPenutupPDF = async function() {
       if (h) pdf.text(`Rumah ${h.name}`, 105, 122, { align: 'center' });
       
       pdf.setFontSize(16); pdf.setFont('helvetica','bold');
-      pdf.text(`🥇 ${champ.gold}   🥈 ${champ.silver}   🥉 ${champ.bronze}`, 105, 140, { align: 'center' });
+      pdf.text(`Emas: ${champ.gold}    Perak: ${champ.silver}    Gangsa: ${champ.bronze}`, 105, 140, { align: 'center' });
       pdf.setFontSize(14); pdf.setFont('helvetica','normal');
       pdf.text(`Jumlah ${champ.points} mata individu`, 105, 152, { align: 'center' });
       
       pdf.autoTable({
         startY: 170,
-        head: [['#', 'Nama', 'Rumah', '🥇', '🥈', '🥉', 'Mata']],
+        head: [['#', 'Nama', 'Rumah', 'Emas', 'Perak', 'Gangsa', 'Mata']],
         body: olahragawati.slice(0, 10).map((a, i) => [
           i+1, a.name, housesMap[a.houseId]?.name||'-', a.gold, a.silver, a.bronze, a.points
         ]),
@@ -2886,7 +3278,7 @@ window.exportPenutupPDF = async function() {
     
     pdf.autoTable({
       startY: 45,
-      head: [['#', 'Rumah Sukan', '🥇 Emas', '🥈 Perak', '🥉 Gangsa', 'Jumlah Mata']],
+      head: [['#', 'Rumah Sukan', 'Emas', 'Perak', 'Gangsa', 'Jumlah Mata']],
       body: houses.map((h, i) => [i+1, h.name, h.gold||0, h.silver||0, h.bronze||0, h.points||0]),
       headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
       styles: { fontSize: 11, cellPadding: 5 },
