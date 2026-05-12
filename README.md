@@ -54,25 +54,34 @@ Logo akan auto-swap berdasarkan tema (dark/light mode).
 
 ---
 
-## 🚀 Deploy ke GitHub Pages
+## 🚀 Deploy ke Firebase Hosting (Recommended!)
+
+**Lihat panduan lengkap dalam [`MIGRATE-TO-FIREBASE.md`](./MIGRATE-TO-FIREBASE.md)**
+
+Quick steps:
+```bash
+npm install -g firebase-tools
+firebase login
+cd skor2u-pro
+firebase deploy --only hosting
+```
+
+App live di: **https://skor2u.web.app** 🎉
+
+---
+
+## 🚀 Deploy ke GitHub Pages (Alternative)
 
 1. **Update Firestore Rules**:
    - Firebase Console → Firestore → Rules → paste `firestore.rules` → **Publish**
 
 2. **Push ke GitHub**:
    ```bash
-   # Backup folder lama dulu
    git checkout -b v3-rebrand
-   
-   # Replace files dalam repo Sport2u dengan files dari skor2u-pro/
    git add .
-   git commit -m "v3.1 Rebrand to Skor2u with logo"
+   git commit -m "v3.5 Skor2u Pro"
    git push
    ```
-
-3. **Bila user existing buka app**:
-   - PWA cache auto-update sebab `sw.js` version baru (`skor2u-pro-v3.1.0`)
-   - Tunggu 5-10 saat → refresh
 
 ---
 

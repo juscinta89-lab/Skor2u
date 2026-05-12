@@ -1,5 +1,5 @@
-// Skor2u Pro Service Worker v3.5.1 - Migration Tool + Legacy Data Fix
-const CACHE_NAME = 'skor2u-pro-v3.5.1';
+// Skor2u Pro Service Worker v3.6 - Firebase Hosting Ready
+const CACHE_NAME = 'skor2u-pro-v3.6.0';
 const ASSETS = [
   './',
   './index.html',
