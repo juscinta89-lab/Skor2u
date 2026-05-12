@@ -1,16 +1,8 @@
-// Sport2u - Authentication Module (with Role System)
+// Sport2u Pro - Authentication
 import { auth, db, googleProvider } from './firebase-config.js';
-import { 
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged 
-} from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
-import { 
-  doc, setDoc, getDoc, getDocs, query, collection, where,
-  serverTimestamp 
-} from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
+import { signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+import { doc, setDoc, getDoc, getDocs, query, collection, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
 
-// Login dengan Google
 window.signInWithGoogle = async function() {
   try {
     document.getElementById('loading-screen').classList.remove('hidden');
@@ -21,38 +13,23 @@ window.signInWithGoogle = async function() {
     const userSnap = await getDoc(userRef);
     
     if (!userSnap.exists()) {
-      // User baru - daftar sebagai admin sekolah sendiri (default)
       await setDoc(userRef, {
-        uid: user.uid,
-        nama: user.displayName,
-        email: user.email,
-        photoURL: user.photoURL,
-        schoolId: user.uid,
+        uid: user.uid, nama: user.displayName, email: user.email,
+        photoURL: user.photoURL, schoolId: user.uid,
         schoolName: user.displayName + "'s School",
-        role: 'admin',
-        createdAt: serverTimestamp(),
-        lastLogin: serverTimestamp()
+        role: 'admin', createdAt: serverTimestamp(), lastLogin: serverTimestamp()
       });
     } else {
-      await setDoc(userRef, { 
-        lastLogin: serverTimestamp(),
-        nama: user.displayName,
-        photoURL: user.photoURL
-      }, { merge: true });
+      await setDoc(userRef, { lastLogin: serverTimestamp(), nama: user.displayName, photoURL: user.photoURL }, { merge: true });
     }
     
     showToast('Berjaya log masuk!', 'success');
   } catch (error) {
     console.error('Login error:', error);
     document.getElementById('loading-screen').classList.add('hidden');
-    
-    if (error.code === 'auth/popup-closed-by-user') {
-      showToast('Login dibatalkan', 'info');
-    } else if (error.code === 'auth/configuration-not-found' || error.code === 'auth/invalid-api-key') {
-      showToast('Sila setup Firebase config dahulu (rujuk SETUP.md)', 'error');
-    } else {
-      showToast('Error: ' + error.message, 'error');
-    }
+    if (error.code === 'auth/popup-closed-by-user') showToast('Login dibatalkan', 'info');
+    else if (error.code === 'auth/configuration-not-found' || error.code === 'auth/invalid-api-key') showToast('Firebase config tidak betul', 'error');
+    else showToast('Error: ' + error.message, 'error');
   }
 };
 
@@ -60,10 +37,8 @@ window.signOutUser = async function() {
   try {
     await signOut(auth);
     showToast('Berjaya log keluar', 'success');
-    window.location.reload();
-  } catch (error) {
-    console.error('Logout error:', error);
-  }
+    setTimeout(() => window.location.reload(), 500);
+  } catch (error) { console.error('Logout error:', error); }
 };
 
 onAuthStateChanged(auth, async (user) => {
@@ -79,18 +54,15 @@ onAuthStateChanged(auth, async (user) => {
     const userRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userRef);
     let userData = userSnap.exists() ? userSnap.data() : {
-      uid: user.uid,
-      nama: user.displayName,
-      email: user.email,
-      photoURL: user.photoURL,
-      schoolId: user.uid,
-      schoolName: 'My School',
-      role: 'admin'
+      uid: user.uid, nama: user.displayName, email: user.email,
+      photoURL: user.photoURL, schoolId: user.uid,
+      schoolName: 'My School', role: 'admin'
     };
     
-    // Check kalau user ni member sekolah lain
+    // BUG FIX: Check membership only for OTHER schools (not own school)
+    // Prevents admin from being demoted by invited-self
     try {
-      const memberCheck = await checkMembership(user.email);
+      const memberCheck = await checkMembership(user.email, user.uid);
       if (memberCheck) {
         userData = {
           ...userData,
@@ -103,21 +75,16 @@ onAuthStateChanged(auth, async (user) => {
         };
       } else {
         userData.isOwnSchool = true;
-        // Pastikan kalau ni sekolah sendiri, role = admin
-        if (userData.schoolId === user.uid) {
-          userData.role = 'admin';
-        }
+        if (userData.schoolId === user.uid) userData.role = 'admin';
       }
     } catch (err) {
       console.log('No membership found, using own school');
       userData.isOwnSchool = true;
+      if (userData.schoolId === user.uid) userData.role = 'admin';
     }
     
     window.currentUser = userData;
-    
-    if (window.initApp) {
-      window.initApp(userData);
-    }
+    if (window.initApp) window.initApp(userData);
   } else {
     landingPage.classList.remove('hidden');
     appContainer.classList.add('hidden');
@@ -125,17 +92,25 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-async function checkMembership(email) {
+// FIX: Case-insensitive email matching + exclude own school
+async function checkMembership(email, ownUid) {
   try {
-    const membersQuery = query(
+    const emailLower = email.toLowerCase();
+    const q = query(
       collection(db, 'memberships'),
-      where('email', '==', email),
+      where('email', '==', emailLower),
       where('status', '==', 'active')
     );
-    const snap = await getDocs(membersQuery);
+    const snap = await getDocs(q);
     
     if (!snap.empty) {
-      return snap.docs[0].data();
+      // BUG FIX: Skip membership for own school (admin shouldn't be demoted)
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data();
+        if (data.schoolId !== ownUid) {
+          return data;
+        }
+      }
     }
     return null;
   } catch (err) {
@@ -150,36 +125,14 @@ window.showToast = function(message, type = 'info') {
   
   const toast = document.createElement('div');
   toast.className = 'toast';
-  
   const colors = {
     success: 'border-green-500 text-green-400',
     error: 'border-red-500 text-red-400',
     info: 'border-neon-blue text-neon-blue',
     warning: 'border-yellow-500 text-yellow-400'
   };
-  
   toast.classList.add(...colors[type].split(' '));
   toast.textContent = message;
   document.body.appendChild(toast);
-  
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-};
-
-window.hasPermission = function(action) {
-  const user = window.currentUser;
-  if (!user) return false;
-  
-  const role = user.role || 'viewer';
-  
-  const permissions = {
-    admin: ['view', 'manage_events', 'manage_houses', 'manage_athletes', 'manage_members', 'update_score', 'add_athletes', 'add_acara', 'manage_settings'],
-    urusetia: ['view', 'update_score', 'add_acara', 'add_athletes'],
-    ketua_rumah: ['view', 'add_athletes_own_house'],
-    viewer: ['view']
-  };
-  
-  return permissions[role]?.includes(action) || false;
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
 };

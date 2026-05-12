@@ -121,11 +121,12 @@ service cloud.firestore {
         match /acara/{acaraId} {
           allow read: if canRead(schoolId);
           allow write: if canManageScore(schoolId);
-        }
-        
-        match /participants/{participantId} {
-          allow read: if canRead(schoolId);
-          allow write: if canManageScore(schoolId);
+          
+          // Peserta acara (atlet yang mewakili rumah dalam acara ini)
+          match /participants/{participantId} {
+            allow read: if canRead(schoolId);
+            allow write: if canManageScore(schoolId);
+          }
         }
       }
       

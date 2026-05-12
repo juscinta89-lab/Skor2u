@@ -8,13 +8,12 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/10.7.0/firebase
 
 // Firebase config - GANTI dengan config anda sendiri
 const firebaseConfig = {
-  apiKey: "AIzaSyA2y1MjAhiSsab08pH8DaPYO462nloAoPk",
-  authDomain: "skor2u.firebaseapp.com",
-  projectId: "skor2u",
-  storageBucket: "skor2u.firebasestorage.app",
-  messagingSenderId: "824115935883",
-  appId: "1:824115935883:web:fb645f22649ae5d07f328e",
-  measurementId: "G-T0VHKGVH6D"
+  apiKey: "AIzaSyDEMO-GANTI-DENGAN-API-KEY-ANDA",
+  authDomain: "sport2u-demo.firebaseapp.com",
+  projectId: "sport2u-demo",
+  storageBucket: "sport2u-demo.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef123456"
 };
 
 // Initialize Firebase
