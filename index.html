@@ -3,15 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#0a0e27">
-<meta name="description" content="Sport2u Pro - Sistem Pengurusan Sukan Lengkap untuk Sekolah">
-<title>Sport2u Pro — Sistem Pengurusan Sukan</title>
+<meta name="theme-color" content="#050a1f">
+<meta name="description" content="Skor2u Pro - Sistem Pengurusan Sukan Lengkap untuk Sekolah">
+<title>Skor2u Pro — Sistem Pengurusan Sukan</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+<link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
 <script>
-// Apply theme early to prevent flash
-const savedTheme = localStorage.getItem('sport2u-theme') || 'dark';
+const savedTheme = localStorage.getItem('skor2u-theme') || 'dark';
 document.documentElement.setAttribute('data-theme', savedTheme);
 </script>
 <script src="https://cdn.tailwindcss.com"></script>
@@ -20,11 +19,11 @@ tailwind.config = {
   theme: {
     extend: {
       colors: {
-        'neon-blue': '#00d4ff',
-        'neon-cyan': '#06b6d4',
-        'dark-bg': '#0a0e27',
-        'dark-card': '#111634',
-        'dark-border': '#1e2547'
+        'neon-blue': '#1e90ff',
+        'neon-cyan': '#4ba8ff',
+        'dark-bg': '#050a1f',
+        'dark-card': '#0a1432',
+        'dark-border': '#1e2a5a'
       },
       fontFamily: {
         'display': ['Space Grotesk', 'sans-serif'],
@@ -38,28 +37,25 @@ tailwind.config = {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
-<!-- PDF Generation -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.0/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body class="font-body min-h-screen overflow-x-hidden">
 
-<!-- Animated Background (only in dark mode) -->
+<!-- Animated Background -->
 <div class="fixed inset-0 -z-10 overflow-hidden" id="bg-decoration">
-  <div class="absolute top-0 -left-40 w-96 h-96 bg-neon-blue/20 rounded-full blur-3xl animate-pulse"></div>
-  <div class="absolute top-1/2 -right-40 w-96 h-96 bg-cyan-500/20 rounded-full blur-3xl animate-pulse" style="animation-delay: 1s"></div>
-  <div class="absolute bottom-0 left-1/2 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl animate-pulse" style="animation-delay: 2s"></div>
+  <div class="absolute top-0 -left-40 w-96 h-96 rounded-full blur-3xl animate-pulse" style="background:rgba(30,144,255,0.2)"></div>
+  <div class="absolute top-1/2 -right-40 w-96 h-96 rounded-full blur-3xl animate-pulse" style="background:rgba(10,26,61,0.4);animation-delay:1s"></div>
+  <div class="absolute bottom-0 left-1/2 w-96 h-96 rounded-full blur-3xl animate-pulse" style="background:rgba(75,168,255,0.2);animation-delay:2s"></div>
 </div>
 
 <!-- LANDING PAGE -->
 <div id="landing-page" class="min-h-screen">
   <nav class="fixed top-0 w-full z-50 backdrop-blur-xl border-b border-dark-border" style="background:var(--glass-bg)">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-neon-blue to-cyan-500 flex items-center justify-center shadow-lg">
-          <svg class="w-6 h-6" style="color:var(--bg-main)" fill="currentColor" viewBox="0 0 24 24"><path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/></svg>
-        </div>
-        <span class="font-display font-bold text-xl tracking-tight">Sport<span class="text-neon-blue">2u</span> <span class="text-xs font-normal opacity-60">Pro</span></span>
+      <div class="flex items-center gap-2">
+        <span class="brand-logo" style="--logo-w:130px;--logo-h:38px"></span>
+        <span class="text-xs px-2 py-0.5 rounded font-bold" style="background:var(--accent-glow);color:var(--accent-2)">PRO</span>
       </div>
       <div class="flex items-center gap-3">
         <button onclick="toggleTheme()" class="theme-toggle" title="Tukar tema">
@@ -72,13 +68,18 @@ tailwind.config = {
 
   <section class="pt-32 pb-20 px-4 sm:px-6">
     <div class="max-w-7xl mx-auto text-center">
-      <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-neon-blue/30 mb-6" style="background:var(--accent-glow)">
-        <span class="w-2 h-2 rounded-full bg-neon-blue animate-pulse"></span>
-        <span class="text-sm text-neon-blue">Sistem Pengurusan Sukan Profesional</span>
+      <!-- Hero Logo -->
+      <div class="flex justify-center mb-8">
+        <img src="assets/logo.png" alt="Skor2u" class="hero-logo h-20 sm:h-28" id="hero-logo">
+      </div>
+      
+      <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border mb-6" style="border-color:var(--accent-2);background:var(--accent-glow)">
+        <span class="w-2 h-2 rounded-full animate-pulse" style="background:var(--accent-2)"></span>
+        <span class="text-sm" style="color:var(--accent-2)">Sistem Pengurusan Sukan Profesional</span>
       </div>
       <h1 class="font-display font-bold text-4xl sm:text-6xl md:text-7xl leading-tight mb-6">
         Olahraga<br>
-        <span class="bg-gradient-to-r from-neon-blue via-cyan-400 to-blue-500 bg-clip-text text-transparent">Profesional</span><br>
+        <span class="bg-clip-text text-transparent" style="background-image:var(--gradient-brand-r);-webkit-background-clip:text;background-clip:text">Profesional</span><br>
         Untuk Sekolah
       </h1>
       <p class="text-lg sm:text-xl max-w-2xl mx-auto mb-10" style="color:var(--text-secondary)">
@@ -108,7 +109,7 @@ tailwind.config = {
 
   <footer class="py-8 px-4 sm:px-6 border-t border-dark-border">
     <div class="max-w-7xl mx-auto text-center text-sm" style="color:var(--text-muted)">
-      © 2026 Sport2u Pro — Sistem Pengurusan Sukan
+      © 2026 Skor2u Pro — Sistem Pengurusan Sukan
     </div>
   </footer>
 </div>
@@ -116,6 +117,7 @@ tailwind.config = {
 <!-- LOADING SCREEN -->
 <div id="loading-screen" class="hidden fixed inset-0 z-50 flex items-center justify-center" style="background:var(--bg-main)">
   <div class="text-center">
+    <img src="assets/logo.png" id="loading-logo" alt="Skor2u" class="h-16 mx-auto mb-6 opacity-90">
     <div class="w-16 h-16 border-4 border-dark-border border-t-neon-blue rounded-full animate-spin mx-auto mb-4"></div>
     <p style="color:var(--text-secondary)">Memuatkan...</p>
   </div>
@@ -124,26 +126,36 @@ tailwind.config = {
 <!-- APP CONTAINER -->
 <div id="app-container" class="hidden"></div>
 
-<!-- Theme toggle script -->
 <script>
+function applyLogoForTheme(theme) {
+  // Swap hero and loading logos based on theme
+  const heroLogo = document.getElementById('hero-logo');
+  const loadingLogo = document.getElementById('loading-logo');
+  const src = theme === 'dark' ? 'assets/logo-light.png' : 'assets/logo.png';
+  if (heroLogo) heroLogo.src = src;
+  if (loadingLogo) loadingLogo.src = src;
+  // Also any logo in app shell
+  document.querySelectorAll('.dynamic-logo').forEach(img => img.src = src);
+}
+
 window.toggleTheme = function() {
   const current = document.documentElement.getAttribute('data-theme');
   const next = current === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('sport2u-theme', next);
+  localStorage.setItem('skor2u-theme', next);
   document.querySelectorAll('#theme-icon').forEach(el => el.textContent = next === 'dark' ? '🌙' : '☀️');
   document.getElementById('bg-decoration').style.opacity = next === 'dark' ? '1' : '0.3';
-  // Update meta theme color
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', next === 'dark' ? '#0a0e27' : '#f8fafc');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', next === 'dark' ? '#050a1f' : '#f0f5fc');
+  applyLogoForTheme(next);
 };
-// Init icon
+
 document.addEventListener('DOMContentLoaded', () => {
   const theme = document.documentElement.getAttribute('data-theme');
   document.querySelectorAll('#theme-icon').forEach(el => el.textContent = theme === 'dark' ? '🌙' : '☀️');
+  applyLogoForTheme(theme);
 });
 </script>
 
-<!-- Firebase SDK -->
 <script type="module" src="js/firebase-config.js"></script>
 <script type="module" src="js/auth.js"></script>
 <script type="module" src="js/app.js"></script>

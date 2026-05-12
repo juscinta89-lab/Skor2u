@@ -1,12 +1,12 @@
-// Sport2u - Firebase Configuration
-// IMPORTANT: Ganti config di bawah dengan Firebase project anda sendiri
+// Skor2u Pro - Firebase Configuration
+// Projek Firebase: skor2u
 // Pergi ke: https://console.firebase.google.com/
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
 
-// Firebase config - GANTI dengan config anda sendiri
+// Firebase config — Skor2u project
 const firebaseConfig = {
   apiKey: "AIzaSyA2y1MjAhiSsab08pH8DaPYO462nloAoPk",
   authDomain: "skor2u.firebaseapp.com",
@@ -23,7 +23,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
-// Export untuk digunakan di file lain
+// Force account chooser every time (so user can switch Google account)
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
 export { app, auth, db, googleProvider };
 window.firebaseAuth = auth;
 window.firebaseDb = db;

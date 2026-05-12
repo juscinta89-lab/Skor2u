@@ -1,4 +1,4 @@
-// Sport2u Pro - Authentication
+// Skor2u Pro - Authentication
 import { auth, db, googleProvider } from './firebase-config.js';
 import { signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
 import { doc, setDoc, getDoc, getDocs, query, collection, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";

@@ -1,13 +1,13 @@
 {
-  "name": "Sport2u — Live Sports Management",
-  "short_name": "Sport2u",
-  "description": "Live Sports Management System untuk Sekolah",
+  "name": "Skor2u Pro — Sistem Pengurusan Sukan",
+  "short_name": "Skor2u",
+  "description": "Sistem Pengurusan Sukan Profesional untuk Sekolah Malaysia",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0a0e27",
-  "theme_color": "#00d4ff",
+  "background_color": "#050a1f",
+  "theme_color": "#1e90ff",
   "icons": [
     {
       "src": "assets/icon-192.png",

@@ -1,4 +1,4 @@
-// Sport2u Pro - Main Application
+// Skor2u Pro - Main Application
 import { db } from './firebase-config.js';
 import {
   collection, doc, addDoc, setDoc, getDoc, getDocs,
@@ -124,14 +124,10 @@ function renderAppShell(user) {
       <aside id="sidebar" class="sidebar fixed md:sticky top-0 left-0 h-screen w-64 border-r border-dark-border z-40 overflow-y-auto flex flex-col" style="background:var(--bg-card)">
         <div class="p-6 border-b border-dark-border">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-neon-blue to-cyan-500 flex items-center justify-center">
-              <svg class="w-6 h-6" style="color:var(--bg-main)" fill="currentColor" viewBox="0 0 24 24"><path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/></svg>
-            </div>
-            <div>
-              <div class="font-display font-bold text-lg">Sport<span class="text-neon-blue">2u</span> <span class="text-xs opacity-60">Pro</span></div>
-              <div class="text-xs" style="color:var(--text-muted)">${(user.schoolName || 'My School').substring(0, 22)}</div>
-            </div>
+            <img src="assets/logo.png" class="dynamic-logo h-9" alt="Skor2u">
+            <span class="text-xs px-1.5 py-0.5 rounded font-bold" style="background:var(--accent-glow);color:var(--accent-2)">PRO</span>
           </div>
+          <div class="text-xs mt-2" style="color:var(--text-muted)">${(user.schoolName || 'My School').substring(0, 30)}</div>
           <div class="mt-3 inline-flex items-center gap-1.5 px-2 py-1 rounded-md ${role.bg} text-xs ${role.color}">
             <span>${role.icon}</span><span class="font-medium">${role.label}</span>
           </div>
@@ -167,7 +163,7 @@ function renderAppShell(user) {
           <button onclick="toggleSidebar()" class="p-2">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
           </button>
-          <div class="font-display font-bold">Sport<span class="text-neon-blue">2u</span></div>
+          <div class="font-display font-bold flex items-center gap-2"><img src="assets/logo.png" class="dynamic-logo h-6" alt="Skor2u"></div>
           <button onclick="toggleTheme()" class="p-2"><span id="theme-icon">🌙</span></button>
         </div>
         
@@ -183,9 +179,11 @@ function renderAppShell(user) {
     });
   });
   
-  // Init theme icon
+  // Init theme icon + logo
   const theme = document.documentElement.getAttribute('data-theme');
   document.querySelectorAll('#theme-icon').forEach(el => el.textContent = theme === 'dark' ? '🌙' : '☀️');
+  const logoSrc = theme === 'dark' ? 'assets/logo-light.png' : 'assets/logo.png';
+  document.querySelectorAll('.dynamic-logo').forEach(img => img.src = logoSrc);
 }
 
 function getMenuForRole(role) {
@@ -909,52 +907,112 @@ async function loadParticipants(eventId, acaraId, acara, typeInfo) {
     // Render result section
     const resultEl = document.getElementById('acara-result');
     if (resultEl) {
-      const ranked = rankResults(participants.map(p => ({...p, value: p.measurement})), typeInfo.measurementType);
+      // Always fetch the most current saved result
+      const savedResultSnap = await getDoc(doc(db,'schools',sid,'results',`${eventId}_${acaraId}`));
+      const savedResult = savedResultSnap.exists() ? savedResultSnap.data() : null;
       
-      if (ranked.length === 0) {
-        resultEl.innerHTML = canManage() && typeInfo.measurementType === 'score' ? `
-          <button onclick="showManualResultModal('${eventId}','${acaraId}')" class="btn-primary w-full">Rekod Keputusan Manual (Pilih Emas/Perak/Gangsa)</button>
-        ` : '<div class="empty-state text-sm">Belum ada keputusan</div>';
-      } else {
-        const medals = ['🥇','🥈','🥉'];
-        const medalNames = ['EMAS','PERAK','GANGSA'];
-        const medalClass = ['medal-gold','medal-silver','medal-bronze'];
-        const points = [10,5,3];
+      // Determine display source
+      const isAutoRanked = typeInfo.measurementType === 'time' || typeInfo.measurementType === 'distance';
+      const ranked = isAutoRanked ? rankResults(participants.map(p => ({...p, value: p.measurement})), typeInfo.measurementType) : [];
+      const hasRanking = ranked.length >= 3;
+      const hasSavedResult = !!savedResult;
+      
+      const medals = ['🥇','🥈','🥉'];
+      const medalNames = ['EMAS','PERAK','GANGSA'];
+      const medalClass = ['medal-gold','medal-silver','medal-bronze'];
+      const points = [10,5,3];
+      
+      let displayHTML = '';
+      
+      // Show saved result if exists (priority: saved > computed ranking)
+      if (hasSavedResult) {
+        const savedPodium = [
+          { houseId: savedResult.gold, athleteName: savedResult.goldAthlete, value: savedResult.goldValue },
+          { houseId: savedResult.silver, athleteName: savedResult.silverAthlete, value: savedResult.silverValue },
+          { houseId: savedResult.bronze, athleteName: savedResult.bronzeAthlete, value: savedResult.bronzeValue }
+        ];
         
-        resultEl.innerHTML = `
-          <div class="space-y-2 mb-4">
-            ${ranked.slice(0,3).map((r,i) => {
-              const ath = athletes[r.athleteId] || {};
-              const hs = houses[r.houseId] || {};
-              return `
-                <div class="flex items-center gap-3 p-3 rounded-lg ${medalClass[i]}">
-                  <span class="text-2xl">${medals[i]}</span>
-                  <div class="flex-1">
-                    <div class="font-bold">${ath.name || 'Unknown'}</div>
-                    <div class="text-xs opacity-80">${hs.name||''} • ${formatMeasurement(r.value, typeInfo.measurementType)}</div>
-                  </div>
-                  <div class="text-right">
-                    <div class="font-bold text-sm">${medalNames[i]}</div>
-                    <div class="text-xs">+${points[i]} mata</div>
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-          ${ranked.length > 3 ? `
-            <details>
-              <summary class="cursor-pointer text-sm" style="color:var(--text-secondary)">Lihat semua kedudukan (${ranked.length})</summary>
-              <div class="mt-2 space-y-1">
-                ${ranked.slice(3).map((r,i) => {
-                  const ath = athletes[r.athleteId] || {};
-                  return `<div class="text-sm p-2 rounded" style="background:var(--bg-elevated)">${i+4}. ${ath.name||'-'} — ${formatMeasurement(r.value, typeInfo.measurementType)}</div>`;
-                }).join('')}
+        displayHTML += '<div class="mb-3 p-2 rounded text-xs flex items-center gap-2" style="background:var(--accent-glow);color:var(--accent-2)">✓ Keputusan tersimpan' + (savedResult.isUpdate ? ' (telah dikemaskini)' : '') + '</div>';
+        displayHTML += '<div class="space-y-2 mb-4">';
+        savedPodium.forEach((p, i) => {
+          const hs = houses[p.houseId] || { name: '?', color: '#666' };
+          displayHTML += `
+            <div class="flex items-center gap-3 p-3 rounded-lg ${medalClass[i]}">
+              <span class="text-2xl">${medals[i]}</span>
+              <div class="flex-1">
+                <div class="font-bold">${hs.name}</div>
+                ${p.athleteName ? `<div class="text-xs opacity-80">${p.athleteName}${p.value != null ? ' • ' + formatMeasurement(p.value, typeInfo.measurementType) : ''}</div>` : ''}
               </div>
-            </details>
-          ` : ''}
-          ${canManage() ? `<button onclick="finalizeResult('${eventId}','${acaraId}')" class="btn-primary w-full mt-3">${acara.completed?'🔄 Update':'✅ Sahkan'} Keputusan & Award Mata</button>` : ''}
-        `;
+              <div class="text-right">
+                <div class="font-bold text-sm">${medalNames[i]}</div>
+                <div class="text-xs">+${points[i]} mata</div>
+              </div>
+            </div>
+          `;
+        });
+        displayHTML += '</div>';
+      } else if (hasRanking) {
+        // Show computed ranking (not yet saved)
+        displayHTML += '<div class="mb-3 p-2 rounded text-xs" style="background:rgba(245,158,11,0.15);color:var(--warning)">⚠️ Cadangan ranking — belum disahkan & belum award mata</div>';
+        displayHTML += '<div class="space-y-2 mb-4">';
+        ranked.slice(0,3).forEach((r, i) => {
+          const ath = athletes[r.athleteId] || {};
+          const hs = houses[r.houseId] || {};
+          displayHTML += `
+            <div class="flex items-center gap-3 p-3 rounded-lg ${medalClass[i]}">
+              <span class="text-2xl">${medals[i]}</span>
+              <div class="flex-1">
+                <div class="font-bold">${ath.name || 'Unknown'}</div>
+                <div class="text-xs opacity-80">${hs.name||''} • ${formatMeasurement(r.value, typeInfo.measurementType)}</div>
+              </div>
+              <div class="text-right">
+                <div class="font-bold text-sm">${medalNames[i]}</div>
+                <div class="text-xs">+${points[i]} mata</div>
+              </div>
+            </div>
+          `;
+        });
+        displayHTML += '</div>';
+        
+        if (ranked.length > 3) {
+          displayHTML += `<details><summary class="cursor-pointer text-sm" style="color:var(--text-secondary)">Lihat semua kedudukan (${ranked.length})</summary><div class="mt-2 space-y-1">`;
+          ranked.slice(3).forEach((r, i) => {
+            const ath = athletes[r.athleteId] || {};
+            displayHTML += `<div class="text-sm p-2 rounded" style="background:var(--bg-elevated)">${i+4}. ${ath.name||'-'} — ${formatMeasurement(r.value, typeInfo.measurementType)}</div>`;
+          });
+          displayHTML += '</div></details>';
+        }
       }
+      
+      // Render action buttons based on state
+      if (canManage()) {
+        displayHTML += '<div class="space-y-2 mt-3">';
+        
+        if (hasSavedResult) {
+          // Already has result - show update buttons
+          if (isAutoRanked && hasRanking) {
+            displayHTML += `<button onclick="finalizeResult('${eventId}','${acaraId}')" class="btn-primary w-full">🔄 Kemaskini dari Catatan Terkini</button>`;
+          }
+          displayHTML += `<button onclick="showManualResultModal('${eventId}','${acaraId}')" class="btn-secondary w-full">✏️ Edit Manual</button>`;
+          displayHTML += `<button onclick="deleteResult('${eventId}','${acaraId}')" class="btn-danger w-full">🗑️ Padam Keputusan & Revert Mata</button>`;
+        } else if (isAutoRanked && hasRanking) {
+          // Auto-rank acara with enough data
+          displayHTML += `<button onclick="finalizeResult('${eventId}','${acaraId}')" class="btn-primary w-full">✅ Sahkan Keputusan & Award Mata</button>`;
+          displayHTML += `<button onclick="showManualResultModal('${eventId}','${acaraId}')" class="btn-secondary w-full">Atau Pilih Manual</button>`;
+        } else {
+          // No data yet OR team-based
+          if (isAutoRanked) {
+            displayHTML += '<div class="empty-state text-sm">Tambah peserta & rekod catatan untuk auto-rank</div>';
+          }
+          displayHTML += `<button onclick="showManualResultModal('${eventId}','${acaraId}')" class="btn-primary w-full">Rekod Keputusan Manual (Pilih Emas/Perak/Gangsa)</button>`;
+        }
+        
+        displayHTML += '</div>';
+      } else if (!hasSavedResult && !hasRanking) {
+        displayHTML = '<div class="empty-state text-sm">Belum ada keputusan</div>';
+      }
+      
+      resultEl.innerHTML = displayHTML;
     }
   }));
 }
@@ -1111,25 +1169,42 @@ window.showManualResultModal = async function(eventId, acaraId) {
   
   if (houses.length < 3) { showToast('Perlu minimum 3 rumah untuk pingat','warning'); return; }
   
-  const opts = houses.map(h => `<option value="${h.id}">${h.name}</option>`).join('');
+  // Pre-load existing result if updating
+  let existingResult = null;
+  try {
+    const exSnap = await getDoc(doc(db,'schools',sid,'results',`${eventId}_${acaraId}`));
+    if (exSnap.exists()) existingResult = exSnap.data();
+  } catch(e) { /* ignore */ }
+  
+  const mkOpts = (selected) => houses.map(h => `<option value="${h.id}" ${h.id===selected?'selected':''}>${h.name}</option>`).join('');
+  
   openModal(`
-    <h2 class="font-display font-bold text-xl mb-4">Rekod Keputusan Manual</h2>
+    <h2 class="font-display font-bold text-xl mb-4">${existingResult?'🔄 Kemaskini':'Rekod'} Keputusan</h2>
+    ${existingResult ? '<p class="text-xs mb-3" style="color:var(--warning)">⚠️ Keputusan sedia ada. Markah lama akan direverse dan markah baru akan diaward.</p>' : ''}
     <form id="manual-result-form" class="space-y-3">
-      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥇 Emas</span><select name="gold" required class="input-field col-span-2">${opts}</select></div>
-      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥈 Perak</span><select name="silver" required class="input-field col-span-2">${opts}</select></div>
-      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥉 Gangsa</span><select name="bronze" required class="input-field col-span-2">${opts}</select></div>
+      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥇 Emas</span><select name="gold" required class="input-field col-span-2">${mkOpts(existingResult?.gold)}</select></div>
+      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥈 Perak</span><select name="silver" required class="input-field col-span-2">${mkOpts(existingResult?.silver)}</select></div>
+      <div class="grid grid-cols-3 gap-2 items-center"><span class="text-sm">🥉 Gangsa</span><select name="bronze" required class="input-field col-span-2">${mkOpts(existingResult?.bronze)}</select></div>
       <div class="flex gap-3 pt-2">
         <button type="button" onclick="closeModal()" class="flex-1 btn-secondary">Batal</button>
-        <button type="submit" class="flex-1 btn-primary">Simpan</button>
+        <button type="submit" class="flex-1 btn-primary" id="manual-submit-btn">${existingResult?'Kemaskini':'Simpan'}</button>
       </div>
     </form>
   `);
   
   document.getElementById('manual-result-form').onsubmit = async (e) => {
     e.preventDefault();
+    const btn = document.getElementById('manual-submit-btn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    
     const fd = new FormData(e.target);
     const g = fd.get('gold'), s = fd.get('silver'), b = fd.get('bronze');
-    if (new Set([g,s,b]).size < 3) { showToast('Rumah mesti berbeza untuk setiap pingat','warning'); return; }
+    if (new Set([g,s,b]).size < 3) {
+      showToast('Rumah mesti berbeza untuk setiap pingat','warning');
+      btn.disabled = false; btn.textContent = existingResult?'Kemaskini':'Simpan';
+      return;
+    }
+    
     await awardMedals(eventId, acaraId, { gold:g, silver:s, bronze:b }, houses);
     closeModal();
   };
@@ -1163,71 +1238,152 @@ window.finalizeResult = async function(eventId, acaraId) {
   }, houses);
 };
 
+window.deleteResult = async function(eventId, acaraId) {
+  if (!confirm('Padam keputusan ini? Markah rumah akan direverse.')) return;
+  const sid = window.currentUser.schoolId;
+  
+  try {
+    const resultRef = doc(db,'schools',sid,'results',`${eventId}_${acaraId}`);
+    const existing = await getDoc(resultRef);
+    if (!existing.exists()) {
+      showToast('Keputusan tidak dijumpai', 'warning');
+      return;
+    }
+    
+    const old = existing.data();
+    const housesSnap = await getDocs(collection(db,'schools',sid,'houses'));
+    const housesMap = {}; housesSnap.forEach(d => housesMap[d.id] = { id: d.id, ...d.data() });
+    
+    // Calculate net delta (just the reversal)
+    const delta = {};
+    const addDelta = (houseId, pts, medalType) => {
+      if (!houseId) return;
+      if (!delta[houseId]) delta[houseId] = { points: 0, gold: 0, silver: 0, bronze: 0 };
+      delta[houseId].points += pts;
+      delta[houseId][medalType] += pts > 0 ? 1 : -1;
+    };
+    
+    if (old.gold) addDelta(old.gold, -10, 'gold');
+    if (old.silver) addDelta(old.silver, -5, 'silver');
+    if (old.bronze) addDelta(old.bronze, -3, 'bronze');
+    
+    const batch = writeBatch(db);
+    
+    for (const [houseId, d] of Object.entries(delta)) {
+      const h = housesMap[houseId];
+      if (!h) continue;
+      batch.update(doc(db,'schools',sid,'houses',houseId), {
+        points: Math.max(0, (h.points||0) + d.points),
+        gold: Math.max(0, (h.gold||0) + d.gold),
+        silver: Math.max(0, (h.silver||0) + d.silver),
+        bronze: Math.max(0, (h.bronze||0) + d.bronze)
+      });
+    }
+    
+    batch.delete(resultRef);
+    batch.update(doc(db,'schools',sid,'events',eventId,'acara',acaraId), { completed: false });
+    
+    await batch.commit();
+    showToast('Keputusan dipadam & markah direvert', 'success');
+  } catch(err) {
+    console.error('deleteResult error:', err);
+    showToast('Error: ' + err.message, 'error');
+  }
+};
+
 async function awardMedals(eventId, acaraId, medalData, houses) {
   const sid = window.currentUser.schoolId;
   
   try {
-    // Check existing result to revert first
     const resultRef = doc(db,'schools',sid,'results',`${eventId}_${acaraId}`);
     const existing = await getDoc(resultRef);
     
     const acaraSnap = await getDoc(doc(db,'schools',sid,'events',eventId,'acara',acaraId));
+    if (!acaraSnap.exists()) throw new Error('Acara tidak dijumpai');
     const acara = acaraSnap.data();
     
-    const housesMap = {}; houses.forEach(h => housesMap[h.id] = h);
-    const batch = writeBatch(db);
-    
-    // Revert old points if existing
-    if (existing.exists()) {
-      const old = existing.data();
-      if (old.gold && housesMap[old.gold]) batch.update(doc(db,'schools',sid,'houses',old.gold), { points: Math.max(0,(housesMap[old.gold].points||0)-10), gold: Math.max(0,(housesMap[old.gold].gold||0)-1) });
-      if (old.silver && housesMap[old.silver]) batch.update(doc(db,'schools',sid,'houses',old.silver), { points: Math.max(0,(housesMap[old.silver].points||0)-5), silver: Math.max(0,(housesMap[old.silver].silver||0)-1) });
-      if (old.bronze && housesMap[old.bronze]) batch.update(doc(db,'schools',sid,'houses',old.bronze), { points: Math.max(0,(housesMap[old.bronze].points||0)-3), bronze: Math.max(0,(housesMap[old.bronze].bronze||0)-1) });
+    // Re-fetch latest house data to avoid stale state
+    const housesMap = {};
+    for (const h of houses) {
+      const fresh = await getDoc(doc(db,'schools',sid,'houses',h.id));
+      if (fresh.exists()) housesMap[h.id] = { id: h.id, ...fresh.data() };
     }
     
-    // Save new result
+    // Calculate net delta per house: aggregate all changes first, then apply once
+    // This prevents the batch overwrite bug
+    const delta = {}; // { houseId: { points: +N, gold: +N, silver: +N, bronze: +N } }
+    
+    const addDelta = (houseId, pts, medalType) => {
+      if (!houseId) return;
+      if (!delta[houseId]) delta[houseId] = { points: 0, gold: 0, silver: 0, bronze: 0 };
+      delta[houseId].points += pts;
+      delta[houseId][medalType] += pts > 0 ? 1 : -1;
+    };
+    
+    // Step 1: If existing result, calculate reversal (negative delta)
+    if (existing.exists()) {
+      const old = existing.data();
+      if (old.gold) addDelta(old.gold, -10, 'gold');
+      if (old.silver) addDelta(old.silver, -5, 'silver');
+      if (old.bronze) addDelta(old.bronze, -3, 'bronze');
+    }
+    
+    // Step 2: Add new awards (positive delta)
+    if (medalData.gold) addDelta(medalData.gold, 10, 'gold');
+    if (medalData.silver) addDelta(medalData.silver, 5, 'silver');
+    if (medalData.bronze) addDelta(medalData.bronze, 3, 'bronze');
+    
+    // Step 3: Apply net delta to each affected house in one update each
+    const batch = writeBatch(db);
+    
+    for (const [houseId, d] of Object.entries(delta)) {
+      const h = housesMap[houseId];
+      if (!h) {
+        console.warn('House not found:', houseId);
+        continue;
+      }
+      const newPoints = Math.max(0, (h.points || 0) + d.points);
+      const newGold = Math.max(0, (h.gold || 0) + d.gold);
+      const newSilver = Math.max(0, (h.silver || 0) + d.silver);
+      const newBronze = Math.max(0, (h.bronze || 0) + d.bronze);
+      
+      batch.update(doc(db,'schools',sid,'houses',houseId), {
+        points: newPoints,
+        gold: newGold,
+        silver: newSilver,
+        bronze: newBronze
+      });
+    }
+    
+    // Step 4: Save result document
     batch.set(resultRef, {
-      eventId, acaraId, acaraName: acara.name,
-      acaraType: acara.acaraType,
-      gold: medalData.gold, silver: medalData.silver, bronze: medalData.bronze,
+      eventId, acaraId,
+      acaraName: acara.name,
+      acaraType: acara.acaraType || 'team',
+      gold: medalData.gold || null,
+      silver: medalData.silver || null,
+      bronze: medalData.bronze || null,
       goldAthlete: medalData.goldAthlete || null,
       silverAthlete: medalData.silverAthlete || null,
       bronzeAthlete: medalData.bronzeAthlete || null,
-      goldValue: medalData.goldValue || null,
-      silverValue: medalData.silverValue || null,
-      bronzeValue: medalData.bronzeValue || null,
+      goldValue: medalData.goldValue ?? null,
+      silverValue: medalData.silverValue ?? null,
+      bronzeValue: medalData.bronzeValue ?? null,
       recordedBy: window.currentUser.email,
-      recordedAt: serverTimestamp()
+      recordedAt: serverTimestamp(),
+      isUpdate: existing.exists()
     });
     
-    // Re-add points based on current values (post-revert if existed)
-    const getCur = (id) => {
-      const h = housesMap[id];
-      if (!h) return null;
-      if (existing.exists()) {
-        const old = existing.data();
-        let p = h.points || 0, g = h.gold||0, s = h.silver||0, b = h.bronze||0;
-        if (old.gold === id) { p -= 10; g -= 1; }
-        if (old.silver === id) { p -= 5; s -= 1; }
-        if (old.bronze === id) { p -= 3; b -= 1; }
-        return { points: Math.max(0,p), gold: Math.max(0,g), silver: Math.max(0,s), bronze: Math.max(0,b) };
-      }
-      return { points: h.points||0, gold: h.gold||0, silver: h.silver||0, bronze: h.bronze||0 };
-    };
-    
-    const gCur = getCur(medalData.gold);
-    if (gCur) batch.update(doc(db,'schools',sid,'houses',medalData.gold), { points: gCur.points+10, gold: gCur.gold+1 });
-    const sCur = getCur(medalData.silver);
-    if (sCur) batch.update(doc(db,'schools',sid,'houses',medalData.silver), { points: sCur.points+5, silver: sCur.silver+1 });
-    const bCur = getCur(medalData.bronze);
-    if (bCur) batch.update(doc(db,'schools',sid,'houses',medalData.bronze), { points: bCur.points+3, bronze: bCur.bronze+1 });
-    
-    // Mark acara completed
-    batch.update(doc(db,'schools',sid,'events',eventId,'acara',acaraId), { completed: true });
+    // Step 5: Mark acara as completed
+    batch.update(doc(db,'schools',sid,'events',eventId,'acara',acaraId), {
+      completed: true,
+      lastResultAt: serverTimestamp()
+    });
     
     await batch.commit();
-    showToast('Keputusan disahkan! 🎉', 'success');
+    showToast(existing.exists() ? 'Keputusan dikemaskini! 🔄' : 'Keputusan disahkan! 🎉', 'success');
   } catch(err) {
+    console.error('awardMedals error:', err);
     showToast('Error: ' + err.message, 'error');
   }
 }
@@ -1399,7 +1555,7 @@ window.exportEventPDF = async function(eventId) {
     const pdf = new jsPDF();
     
     // Header
-    pdf.setFillColor(0, 212, 255);
+    pdf.setFillColor(10, 26, 61);
     pdf.rect(0, 0, 210, 25, 'F');
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(18);
@@ -1454,7 +1610,7 @@ window.exportEventPDF = async function(eventId) {
             a.completed ? 'Selesai' : 'Pending'
           ];
         }),
-        headStyles: { fillColor: [17, 22, 52], textColor: [0, 212, 255] },
+        headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
         styles: { fontSize: 9, cellPadding: 2 },
         columnStyles: { 0: {cellWidth: 12}, 1: {cellWidth: 18} }
       });
@@ -1468,7 +1624,7 @@ window.exportEventPDF = async function(eventId) {
       pdf.setPage(i);
       pdf.setFontSize(8);
       pdf.setTextColor(150, 150, 150);
-      pdf.text(`Sport2u Pro • Halaman ${i}/${totalPages} • Dijana: ${new Date().toLocaleString('ms-MY')}`, 105, 290, { align: 'center' });
+      pdf.text(`Skor2u Pro • Halaman ${i}/${totalPages} • Dijana: ${new Date().toLocaleString('ms-MY')}`, 105, 290, { align: 'center' });
     }
     
     pdf.save(`Jadual-${evt.name.replace(/\s+/g,'_')}.pdf`);
@@ -1498,7 +1654,7 @@ window.exportResultsPDF = async function(eventId) {
     const pdf = new jsPDF();
     
     // Header
-    pdf.setFillColor(0, 212, 255);
+    pdf.setFillColor(10, 26, 61);
     pdf.rect(0, 0, 210, 25, 'F');
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(18); pdf.setFont('helvetica','bold');
@@ -1526,7 +1682,7 @@ window.exportResultsPDF = async function(eventId) {
           r.goldValue!=null ? formatMeasurement(r.goldValue, t.measurementType) : '-'
         ];
       }),
-      headStyles: { fillColor: [17, 22, 52], textColor: [0, 212, 255] },
+      headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
       styles: { fontSize: 9, cellPadding: 3 },
       alternateRowStyles: { fillColor: [245, 245, 245] }
     });
@@ -1541,7 +1697,7 @@ window.exportResultsPDF = async function(eventId) {
       startY: 28,
       head: [['#', 'Rumah Sukan', 'Emas', 'Perak', 'Gangsa', 'Jumlah Mata']],
       body: houseList.map((h,i) => [i+1, h.name, h.gold||0, h.silver||0, h.bronze||0, h.points||0]),
-      headStyles: { fillColor: [17, 22, 52], textColor: [0, 212, 255] },
+      headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
       styles: { fontSize: 11, cellPadding: 4 }
     });
     
@@ -2041,7 +2197,7 @@ window.exportLeaderboardPDF = async function() {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF();
     
-    pdf.setFillColor(0, 212, 255);
+    pdf.setFillColor(10, 26, 61);
     pdf.rect(0, 0, 210, 25, 'F');
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(18); pdf.setFont('helvetica','bold');
@@ -2053,7 +2209,7 @@ window.exportLeaderboardPDF = async function() {
       startY: 35,
       head: [['#', 'Rumah Sukan', 'Emas 🥇', 'Perak 🥈', 'Gangsa 🥉', 'Jumlah Mata']],
       body: houses.map((h,i) => [i+1, h.name, h.gold||0, h.silver||0, h.bronze||0, h.points||0]),
-      headStyles: { fillColor: [17, 22, 52], textColor: [0, 212, 255] },
+      headStyles: { fillColor: [10, 26, 61], textColor: [255, 255, 255] },
       styles: { fontSize: 11, cellPadding: 5 }
     });
     
@@ -2111,7 +2267,7 @@ function renderSettings() {
       ` : ''}
       
       <div class="glass-card p-6">
-        <h2 class="font-display font-bold text-lg mb-2">Tentang Sport2u Pro</h2>
+        <h2 class="font-display font-bold text-lg mb-2">Tentang Skor2u Pro</h2>
         <p class="text-sm mb-1" style="color:var(--text-secondary)">Versi 3.0.0 — Sport Management System</p>
         <p class="text-sm" style="color:var(--text-secondary)">Sistem pengurusan sukan lengkap dengan catatan masa, jadual PDF, dan multi-tenant.</p>
       </div>
@@ -2130,10 +2286,13 @@ function renderSettings() {
 
 window.setTheme = function(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('sport2u-theme', theme);
+  localStorage.setItem('skor2u-theme', theme);
   document.getElementById('bg-decoration').style.opacity = theme==='dark' ? '1' : '0.3';
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', theme==='dark' ? '#0a0e27' : '#f8fafc');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', theme==='dark' ? '#050a1f' : '#f0f5fc');
   document.querySelectorAll('#theme-icon').forEach(el => el.textContent = theme === 'dark' ? '🌙' : '☀️');
+  // Swap all dynamic logos based on theme
+  const logoSrc = theme === 'dark' ? 'assets/logo-light.png' : 'assets/logo.png';
+  document.querySelectorAll('.dynamic-logo').forEach(img => img.src = logoSrc);
   renderSettings();
 };
 
